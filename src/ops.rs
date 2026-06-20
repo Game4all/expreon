@@ -97,6 +97,13 @@ impl OperationTable {
     }
 }
 
+impl OpMetadata {
+    /// Executes the operation forward pass.
+    pub fn call(&self, args: &[Scalar]) -> Scalar {
+        (self.forward_pass)(args)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::hash_map::Entry;

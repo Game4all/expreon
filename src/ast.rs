@@ -22,9 +22,9 @@ pub enum NodeKind {
 #[derive(PartialEq, PartialOrd, Debug)]
 pub struct ExprNode<Tag> {
     /// Kind of node
-    kind: NodeKind,
+    pub kind: NodeKind,
     /// Tag value attached to this node.
-    tag: Tag,
+    pub tag: Tag,
 }
 
 /// An arena containing nodes for expression ASTs
