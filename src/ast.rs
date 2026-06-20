@@ -1,24 +1,4 @@
-use derive_more::with_trait::{Debug, Deref, Display, From, Index, Into};
-
-/// Identifier for an expression root in an arena.
-#[derive(From, Into, Display, Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub struct RootId(usize);
-
-/// Identifier for a node in an arena.
-#[derive(From, Into, Display, Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub struct NodeId(usize);
-
-/// Identifier for a user variable.
-#[derive(From, Into, Display, Debug, Deref, Clone, Copy, PartialEq, PartialOrd)]
-pub struct VariableId(u16);
-
-/// Identifier for a constant or optimizable parameter.
-#[derive(From, Into, Display, Debug, Deref, Clone, Copy, PartialEq, PartialOrd)]
-pub struct ParameterId(usize);
-
-/// Identifier for an operation.
-#[derive(From, Into, Display, Debug, Index, Clone, Copy, PartialEq, PartialOrd)]
-pub struct OperationId(u16);
+use crate::types::{NodeId, OperationId, ParameterId, RootId, VariableId};
 
 /// Type of node.
 #[derive(PartialEq, PartialOrd, Debug)]
@@ -89,9 +69,7 @@ impl<Tag> ExprArena<Tag> {
 
     /// Returns the Node Id for the provided root id.
     pub fn get_root(&self, root_id: RootId) -> Option<NodeId> {
-        self.roots
-            .get(usize::from(root_id))
-            .and_then(|index| Some(*index))
+        self.roots.get(usize::from(root_id)).map(|index| *index)
     }
 
     /// Returns an iterator that walks the Node IDs of an expression
@@ -143,7 +121,9 @@ impl<Tag> ExprNode<Tag> {
 
 #[cfg(test)]
 mod tests {
-    use crate::arena::{ExprArena, ExprNode, NodeId, NodeKind, OperationId, ParameterId, RootId};
+    use crate::ast::{
+        ExprArena, ExprNode, NodeId, NodeKind, OperationId, ParameterId, RootId, VariableId,
+    };
 
     #[test]
     fn test_invalid_node_returns_none() {
@@ -222,7 +202,7 @@ mod tests {
 
         let a = arena.add(ExprNode::new(NodeKind::Parameter(ParameterId::from(0)), ()));
         let b = arena.add(ExprNode::new(NodeKind::Parameter(ParameterId::from(1)), ()));
-        let c = arena.add(ExprNode::new(NodeKind::Parameter(ParameterId::from(2)), ()));
+        let c = arena.add(ExprNode::new(NodeKind::Variable(VariableId::from(2)), ()));
         let mul = arena.add(ExprNode::new(
             NodeKind::Binary {
                 left: a,
