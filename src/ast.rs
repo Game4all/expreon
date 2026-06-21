@@ -69,7 +69,7 @@ impl<Tag> ExprArena<Tag> {
 
     /// Returns the Node Id for the provided root id.
     pub fn get_root(&self, root_id: RootId) -> Option<NodeId> {
-        self.roots.get(usize::from(root_id)).map(|index| *index)
+        self.roots.get(usize::from(root_id)).copied()
     }
 
     /// Returns an iterator that walks the Node IDs of an expression

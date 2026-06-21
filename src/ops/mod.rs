@@ -120,7 +120,7 @@ impl OperationTable {
     /// Returns an iterator over the IDs of all registered unary operations.
     pub fn iter_unary(&self) -> impl ExactSizeIterator<Item = OperationId> {
         self.unary_ops.iter().copied()
-    } 
+    }
 
     /// Returns an iterator over the IDs of all registered binary operations.
     pub fn iter_binary(&self) -> impl ExactSizeIterator<Item = OperationId> {
@@ -139,7 +139,10 @@ impl OpMetadata {
 mod tests {
     use std::collections::hash_map::Entry;
 
-    use crate::ops::{Arity, Operation, OperationSet, OperationTableBuilder};
+    use crate::{
+        ops::{Arity, Operation, OperationSet, OperationTableBuilder},
+        types::Scalar,
+    };
 
     struct TestAdd;
 
@@ -148,7 +151,7 @@ mod tests {
         const ID: &'static str = "test_add";
         const ARITY: Arity = Arity::Binary;
 
-        fn forward(input: &[crate::types::Scalar]) -> crate::types::Scalar {
+        fn forward(input: &[Scalar]) -> Scalar {
             return input[0] + input[1];
         }
     }

@@ -125,6 +125,7 @@ mod tests {
             },
             (),
         ));
+        
         let ops = build_ops_test_table();
         let ctx = EvalContext::new(&arena, &ops);
         assert_eq!(ctx.eval(neg, &[5.0], &[]), -5.0);
