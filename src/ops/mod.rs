@@ -1,5 +1,7 @@
 use std::collections::{HashMap, hash_map::Entry as HashMapEntry};
 
+pub mod builtin;
+
 use crate::types::{OperationId, Scalar};
 
 /// Represents the arity of an operation.
@@ -40,8 +42,11 @@ pub struct OperationTableBuilder {
 /// An immutable lookup table for operations
 /// Provides functions to look operations up.
 pub struct OperationTable {
-    pub ops: Vec<OpMetadata>,
-    pub lookup: HashMap<&'static str, usize>,
+    pub(crate) ops: Vec<OpMetadata>,
+    pub(crate) lookup: HashMap<&'static str, usize>,
+
+    unary_ops: Vec<OperationId>,
+    binary_ops: Vec<OperationId>,
 }
 
 /// Base traits for operation sets, which register sets of operations at a time.
@@ -82,18 +87,44 @@ impl OperationTableBuilder {
 
     /// Consumes the builder and returns a final immutable lookup table
     pub fn build(self) -> OperationTable {
+        let mut unary_ops = Vec::new();
+        let mut binary_ops = Vec::new();
+        for (index, meta) in self.ops.iter().enumerate() {
+            let op_id = OperationId::from(index as u16);
+            match meta.arity {
+                Arity::Unary => unary_ops.push(op_id),
+                Arity::Binary => binary_ops.push(op_id),
+            }
+        }
         OperationTable {
             lookup: self.lookup,
             ops: self.ops,
+            unary_ops,
+            binary_ops,
         }
     }
 }
 
 impl OperationTable {
     // Looks up operation metadata from an operation Id.
-    pub fn get_meta_from_id(&self, id: OperationId) -> Option<&OpMetadata> {
+    pub fn lookup_by_id(&self, id: OperationId) -> Option<&OpMetadata> {
         let operation_index = u16::from(id);
         self.ops.get(operation_index as usize)
+    }
+
+    /// Looks up operation metadata from an Operation itself
+    pub fn lookup<Op: Operation>(&self) -> Option<&OpMetadata> {
+        self.lookup.get(Op::ID).and_then(|x| self.ops.get(*x))
+    }
+
+    /// Returns an iterator over the IDs of all registered unary operations.
+    pub fn iter_unary(&self) -> impl ExactSizeIterator<Item = OperationId> {
+        self.unary_ops.iter().copied()
+    } 
+
+    /// Returns an iterator over the IDs of all registered binary operations.
+    pub fn iter_binary(&self) -> impl ExactSizeIterator<Item = OperationId> {
+        self.binary_ops.iter().copied()
     }
 }
 

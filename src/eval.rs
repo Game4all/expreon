@@ -25,13 +25,13 @@ impl<'a, 'b, Tag> EvalContext<'a, 'b, Tag> {
             NodeKind::Parameter(param_id) => parameters[*param_id as usize],
             NodeKind::Unary { value, op } => {
                 let val = self.eval(value, inputs, parameters);
-                let meta = self.ops.get_meta_from_id(op).expect("op not found");
+                let meta = self.ops.lookup_by_id(op).expect("op not found");
                 meta.call(&[val])
             }
             NodeKind::Binary { left, right, op } => {
                 let l = self.eval(left, inputs, parameters);
                 let r = self.eval(right, inputs, parameters);
-                let meta = self.ops.get_meta_from_id(op).expect("op not found");
+                let meta = self.ops.lookup_by_id(op).expect("op not found");
                 meta.call(&[l, r])
             }
         }
