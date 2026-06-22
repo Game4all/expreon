@@ -86,7 +86,7 @@ impl<'a, 'b, Tag> EvalContext<'a, 'b, Tag> {
 mod tests {
     use ndarray::{arr1, arr2};
 
-    use crate::ast::{ExprArena, ExprNode, NodeKind};
+    use crate::ast::{ExprArena, ExprNode};
     use crate::eval::EvalContext;
     use crate::ops::{Arity, Operation, OperationTableBuilder};
     use crate::types::{OperationId, ParameterId, Scalar, VariableId};
@@ -123,7 +123,7 @@ mod tests {
         let mut arena: ExprArena<()> = ExprArena::new();
         let ops = build_ops_test_table();
 
-        let p = arena.add(ExprNode::new(NodeKind::Parameter(ParameterId::from(1)), ()));
+        let p = arena.add(ExprNode::new_parameter(ParameterId::from(1), ()));
         let ctx = EvalContext::new(&arena, &ops);
 
         assert_eq!(
@@ -137,7 +137,7 @@ mod tests {
         let mut arena: ExprArena<()> = ExprArena::new();
         let ops = build_ops_test_table();
 
-        let v = arena.add(ExprNode::new(NodeKind::Variable(VariableId::from(0)), ()));
+        let v = arena.add(ExprNode::new_variable(VariableId::from(0), ()));
         let ctx = EvalContext::new(&arena, &ops);
         assert_eq!(ctx.eval(v, arr1(&[7.0]).view(), arr1(&[]).view()), 7.0);
     }
@@ -147,16 +147,9 @@ mod tests {
         let mut arena: ExprArena<()> = ExprArena::new();
         let ops = build_ops_test_table();
 
-        let a = arena.add(ExprNode::new(NodeKind::Parameter(ParameterId::from(0)), ()));
-        let b = arena.add(ExprNode::new(NodeKind::Parameter(ParameterId::from(1)), ()));
-        let add = arena.add(ExprNode::new(
-            NodeKind::Binary {
-                left: a,
-                right: b,
-                op: OperationId::from(0),
-            },
-            (),
-        ));
+        let a = arena.add(ExprNode::new_parameter(ParameterId::from(0), ()));
+        let b = arena.add(ExprNode::new_parameter(ParameterId::from(1), ()));
+        let add = arena.add(ExprNode::new_binary(a, b, OperationId::from(0), ()));
 
         let ctx = EvalContext::new(&arena, &ops);
 
@@ -169,14 +162,8 @@ mod tests {
     #[test]
     fn test_eval_unary_neg() {
         let mut arena: ExprArena<()> = ExprArena::new();
-        let v = arena.add(ExprNode::new(NodeKind::Variable(VariableId::from(0)), ()));
-        let neg = arena.add(ExprNode::new(
-            NodeKind::Unary {
-                value: v,
-                op: OperationId::from(1),
-            },
-            (),
-        ));
+        let v = arena.add(ExprNode::new_variable(VariableId::from(0), ()));
+        let neg = arena.add(ExprNode::new_unary(v, OperationId::from(1), ()));
 
         let ops = build_ops_test_table();
         let ctx = EvalContext::new(&arena, &ops);
@@ -189,18 +176,11 @@ mod tests {
         let ops = build_ops_test_table();
 
         let vars: Vec<_> = (0..5)
-            .map(|i| arena.add(ExprNode::new(NodeKind::Variable(VariableId::from(i)), ())))
+            .map(|i| arena.add(ExprNode::new_variable(VariableId::from(i), ())))
             .collect();
 
         let sum = vars[1..].iter().fold(vars[0], |acc, &v| {
-            arena.add(ExprNode::new(
-                NodeKind::Binary {
-                    left: acc,
-                    right: v,
-                    op: OperationId::from(0),
-                },
-                (),
-            ))
+            arena.add(ExprNode::new_binary(acc, v, OperationId::from(0), ()))
         });
 
         let ctx = EvalContext::new(&arena, &ops);
@@ -219,7 +199,7 @@ mod tests {
         let mut arena: ExprArena<()> = ExprArena::new();
         let ops = build_ops_test_table();
 
-        let v = arena.add(ExprNode::new(NodeKind::Variable(VariableId::from(1)), ()));
+        let v = arena.add(ExprNode::new_variable(VariableId::from(1), ()));
         let ctx = EvalContext::new(&arena, &ops);
 
         // 3 samples, 2 variables each; we read variable index 1
@@ -235,7 +215,7 @@ mod tests {
         let mut arena: ExprArena<()> = ExprArena::new();
         let ops = build_ops_test_table();
 
-        let p = arena.add(ExprNode::new(NodeKind::Parameter(ParameterId::from(0)), ()));
+        let p = arena.add(ExprNode::new_parameter(ParameterId::from(0), ()));
         let ctx = EvalContext::new(&arena, &ops);
 
         // 3 samples, each with its own parameter value
@@ -251,16 +231,9 @@ mod tests {
         let mut arena: ExprArena<()> = ExprArena::new();
         let ops = build_ops_test_table();
 
-        let var = arena.add(ExprNode::new(NodeKind::Variable(VariableId::from(0)), ()));
-        let param = arena.add(ExprNode::new(NodeKind::Parameter(ParameterId::from(0)), ()));
-        let add = arena.add(ExprNode::new(
-            NodeKind::Binary {
-                left: var,
-                right: param,
-                op: OperationId::from(0),
-            },
-            (),
-        ));
+        let var = arena.add(ExprNode::new_variable(VariableId::from(0), ()));
+        let param = arena.add(ExprNode::new_parameter(ParameterId::from(0), ()));
+        let add = arena.add(ExprNode::new_binary(var, param, OperationId::from(0), ()));
 
         let ctx = EvalContext::new(&arena, &ops);
 

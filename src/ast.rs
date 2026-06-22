@@ -117,6 +117,26 @@ impl<Tag> ExprNode<Tag> {
     pub const fn new(kind: NodeKind, tag: Tag) -> Self {
         Self { kind, tag }
     }
+
+    /// Returns a node with a binary operation.
+    pub const fn new_binary(left: NodeId, right: NodeId, op: OperationId, tag: Tag) -> Self {
+        Self::new(NodeKind::Binary { left, right, op }, tag)
+    }
+
+    /// Returns a node with an unary operation.
+    pub const fn new_unary(value: NodeId, op: OperationId, tag: Tag) -> Self {
+        Self::new(NodeKind::Unary { value, op }, tag)
+    }
+
+    /// Returns a node which reads variables at index `var`.
+    pub const fn new_variable(var: VariableId, tag: Tag) -> Self {
+        Self::new(NodeKind::Variable(var), tag)
+    }
+
+    /// Returns a node which reads parameters at index `param`.
+    pub const fn new_parameter(param: ParameterId, tag: Tag) -> Self {
+        Self::new(NodeKind::Parameter(param), tag)
+    }
 }
 
 #[cfg(test)]
@@ -136,7 +156,7 @@ mod tests {
     pub fn test_arena_root_same_node_id() {
         let mut arena = ExprArena::new();
 
-        let expr = arena.add(ExprNode::new(NodeKind::Parameter(ParameterId::from(1)), ()));
+        let expr = arena.add(ExprNode::new_parameter(ParameterId::from(1), ()));
         let expr_root = arena.add_root(expr);
 
         assert_eq!(arena.get_root(expr_root).unwrap(), expr,);
@@ -153,17 +173,11 @@ mod tests {
     fn test_walk_unary_expr() {
         let mut arena = ExprArena::new();
 
-        let child = arena.add(ExprNode::new(NodeKind::Parameter(ParameterId::from(0)), ()));
-        let parent = arena.add(ExprNode::new(
-            NodeKind::Unary {
-                value: child,
-                op: OperationId::from(0),
-            },
-            (),
-        ));
+        let child = arena.add(ExprNode::new_parameter(ParameterId::from(0), ()));
+        let parent = arena.add(ExprNode::new_unary(child, OperationId::from(0), ()));
 
         let root = arena.add_root(parent);
-        let visited: Vec<_> = arena.walk_expr(root).unwrap().collect();
+        let visited: Vec<NodeId> = arena.walk_expr(root).unwrap().collect();
 
         assert_eq!(visited, vec![parent, child]);
     }
@@ -172,16 +186,9 @@ mod tests {
     fn test_walk_binary_expr_preorder() {
         let mut arena = ExprArena::new();
 
-        let left = arena.add(ExprNode::new(NodeKind::Parameter(ParameterId::from(1)), ()));
-        let right = arena.add(ExprNode::new(NodeKind::Parameter(ParameterId::from(2)), ()));
-        let root_node = arena.add(ExprNode::new(
-            NodeKind::Binary {
-                left,
-                right,
-                op: OperationId::from(0),
-            },
-            (),
-        ));
+        let left = arena.add(ExprNode::new_parameter(ParameterId::from(1), ()));
+        let right = arena.add(ExprNode::new_parameter(ParameterId::from(2), ()));
+        let root_node = arena.add(ExprNode::new_binary(left, right, OperationId::from(0), ()));
 
         let root = arena.add_root(root_node);
         let visited: Vec<_> = arena.walk_expr(root).unwrap().collect();
@@ -200,26 +207,11 @@ mod tests {
     fn test_walk_nested_expression() {
         let mut arena = ExprArena::new();
 
-        let a = arena.add(ExprNode::new(NodeKind::Parameter(ParameterId::from(0)), ()));
-        let b = arena.add(ExprNode::new(NodeKind::Parameter(ParameterId::from(1)), ()));
-        let c = arena.add(ExprNode::new(NodeKind::Variable(VariableId::from(2)), ()));
-        let mul = arena.add(ExprNode::new(
-            NodeKind::Binary {
-                left: a,
-                right: b,
-                op: OperationId::from(1),
-            },
-            (),
-        ));
-
-        let add = arena.add(ExprNode::new(
-            NodeKind::Binary {
-                left: mul,
-                right: c,
-                op: OperationId::from(2),
-            },
-            (),
-        ));
+        let a = arena.add(ExprNode::new_parameter(ParameterId::from(0), ()));
+        let b = arena.add(ExprNode::new_parameter(ParameterId::from(1), ()));
+        let c = arena.add(ExprNode::new_variable(VariableId::from(2), ()));
+        let mul = arena.add(ExprNode::new_binary(a, b, OperationId::from(1), ()));
+        let add = arena.add(ExprNode::new_binary(mul, c, OperationId::from(2), ()));
 
         let root = arena.add_root(add);
 
@@ -232,10 +224,7 @@ mod tests {
     fn test_iter_expr_nodes() {
         let mut arena = ExprArena::new();
 
-        let p = arena.add(ExprNode::new(
-            NodeKind::Parameter(ParameterId::from(123)),
-            (),
-        ));
+        let p = arena.add(ExprNode::new_parameter(ParameterId::from(123), ()));
 
         let root = arena.add_root(p);
 
