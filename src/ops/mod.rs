@@ -118,12 +118,12 @@ impl OperationTable {
     }
 
     /// Returns an iterator over the IDs of all registered unary operations.
-    pub fn iter_unary(&self) -> impl ExactSizeIterator<Item = OperationId> {
+    pub fn iter_unary_ops(&self) -> impl ExactSizeIterator<Item = OperationId> {
         self.unary_ops.iter().copied()
     }
 
     /// Returns an iterator over the IDs of all registered binary operations.
-    pub fn iter_binary(&self) -> impl ExactSizeIterator<Item = OperationId> {
+    pub fn iter_binary_ops(&self) -> impl ExactSizeIterator<Item = OperationId> {
         self.binary_ops.iter().copied()
     }
 }

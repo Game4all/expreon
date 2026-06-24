@@ -1,7 +1,7 @@
 use crate::types::{NodeId, OperationId, ParameterId, RootId, VariableId};
 
 /// Type of node.
-#[derive(PartialEq, PartialOrd, Debug)]
+#[derive(PartialEq, PartialOrd, Debug, Clone, Copy)]
 pub enum NodeKind {
     Unary {
         value: NodeId,
@@ -20,7 +20,7 @@ pub enum NodeKind {
 
 /// A node in an epression AST
 #[derive(PartialEq, PartialOrd, Debug)]
-pub struct ExprNode<Tag> {
+pub struct ExprNode<Tag: Clone> {
     /// Kind of node
     pub kind: NodeKind,
     /// Tag value attached to this node.
@@ -28,23 +28,23 @@ pub struct ExprNode<Tag> {
 }
 
 /// An arena containing nodes for expression ASTs
-pub struct ExprArena<Tag> {
+pub struct ExprArena<Tag: Clone> {
     nodes: Vec<ExprNode<Tag>>,
     roots: Vec<NodeId>,
 }
 
 /// An iterator that iterates over the nodes of an expression.
 /// Returns the node IDs
-pub struct ExprNodeIter<'a, Tag> {
+pub struct ExprNodeIter<'a, Tag: Clone> {
     arena: &'a ExprArena<Tag>,
     stack: Vec<NodeId>,
 }
 
-impl<Tag> ExprArena<Tag> {
-    pub fn new() -> Self {
+impl<Tag: Clone> ExprArena<Tag> {
+    pub const fn new() -> Self {
         Self {
-            nodes: Default::default(),
-            roots: Default::default(),
+            nodes: Vec::new(),
+            roots: Vec::new(),
         }
     }
 
@@ -89,9 +89,15 @@ impl<Tag> ExprArena<Tag> {
             .flatten()
             .map(move |id| (id, self.get_node(id).unwrap()))
     }
+
+    /// Empties the contents of an arena and invalidates all existing references to it.
+    pub fn clear(&mut self) {
+        self.nodes.clear();
+        self.roots.clear();
+    }
 }
 
-impl<'a, Tag> Iterator for ExprNodeIter<'a, Tag> {
+impl<'a, Tag: Clone> Iterator for ExprNodeIter<'a, Tag> {
     type Item = NodeId;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -113,7 +119,7 @@ impl<'a, Tag> Iterator for ExprNodeIter<'a, Tag> {
     }
 }
 
-impl<Tag> ExprNode<Tag> {
+impl<Tag: Clone> ExprNode<Tag> {
     pub const fn new(kind: NodeKind, tag: Tag) -> Self {
         Self { kind, tag }
     }

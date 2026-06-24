@@ -5,12 +5,12 @@ use crate::ops::OperationTable;
 use crate::types::{NodeId, Scalar};
 
 /// Evaluation context for expressions
-pub struct EvalContext<'a, 'b, Tag> {
+pub struct EvalContext<'a, 'b, Tag: Clone> {
     pub arena: &'a ExprArena<Tag>,
     pub ops: &'b OperationTable,
 }
 
-impl<'a, 'b, Tag> EvalContext<'a, 'b, Tag> {
+impl<'a, 'b, Tag: Clone> EvalContext<'a, 'b, Tag> {
     pub const fn new(arena: &'a ExprArena<Tag>, ops: &'b OperationTable) -> Self {
         Self { arena, ops }
     }
