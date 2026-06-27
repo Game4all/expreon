@@ -74,7 +74,7 @@ mod tests {
     use std::f32::consts::{E, FRAC_PI_2, FRAC_PI_4, PI};
 
     use crate::ops::builtin::{
-        Add, Cos, Div, Exp, Ln, Log10, Log2, MathBaseOps, MathExpLogOps, MathTrigOps, Mul, Sin,
+        Add, Cos, Div, Exp, Ln, Log2, Log10, MathBaseOps, MathExpLogOps, MathTrigOps, Mul, Sin,
         Sub, Tan,
     };
     use crate::ops::{OperationTable, OperationTableBuilder};

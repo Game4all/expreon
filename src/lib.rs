@@ -1,5 +1,5 @@
-mod ast;
-mod eval;
-mod gp;
-mod ops;
-mod types;
+pub mod ast;
+pub mod eval;
+pub mod gp;
+pub mod ops;
+pub mod types;

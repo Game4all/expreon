@@ -10,11 +10,8 @@ use crate::{
 };
 
 pub mod builder;
-pub mod init;
 pub mod mutation;
 pub mod subtree;
-
-pub use init::{Population, PopulationConfig};
 
 /// Base trait for a genome.
 ///
@@ -46,6 +43,37 @@ impl<G: Genome> Individual<G> {
             parameters,
             _ctx: PhantomData,
         }
+    }
+}
+
+/// A collection of individuals making up a generation.
+pub struct Population<G: Genome> {
+    individuals: Vec<Individual<G>>,
+}
+
+impl<G: Genome> Population<G> {
+    pub fn new(individuals: Vec<Individual<G>>) -> Self {
+        Self { individuals }
+    }
+
+    pub fn len(&self) -> usize {
+        self.individuals.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.individuals.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Individual<G>> {
+        self.individuals.iter()
+    }
+
+    pub fn individuals(&self) -> &[Individual<G>] {
+        &self.individuals
+    }
+
+    pub fn into_individuals(self) -> Vec<Individual<G>> {
+        self.individuals
     }
 }
 
@@ -124,21 +152,6 @@ impl<G: Genome> Context<G> {
             CurrentBuffer::B => &mut self.arena_b,
         };
         IndividualBuilder::new(arena, &self.operations, rng)
-    }
-
-    /// Builds an initial population into the active (source) arena and returns
-    /// it. This is the entry point for seeding a GP run before any mutation.
-    pub fn init_population(
-        &mut self,
-        cfg: &PopulationConfig,
-        rng: &mut dyn RngCore,
-    ) -> Population<G> {
-        let arena = match self.current_buffer {
-            CurrentBuffer::A => &mut self.arena_a,
-            CurrentBuffer::B => &mut self.arena_b,
-        };
-
-        init::init_population_into::<G>(arena, &self.operations, cfg, rng)
     }
 }
 

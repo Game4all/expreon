@@ -42,7 +42,11 @@ impl<G: Genome> Mutation<G> for PointMutation {
                 let l = ctx.copy_subtree(left);
                 let r = ctx.copy_subtree(right);
                 let op = ctx.pick_random_binary_op();
-                let kind = NodeKind::Binary { left: l, right: r, op };
+                let kind = NodeKind::Binary {
+                    left: l,
+                    right: r,
+                    op,
+                };
                 ctx.emit(ExprNode::new(kind, G::get_tag_for_node(kind)))
             }
             _ => unreachable!("guarded by applies_to"),

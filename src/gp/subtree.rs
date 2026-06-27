@@ -50,8 +50,8 @@ pub fn gen_tree<G: Genome, B: NodeBuilder<G>>(
     method: TreeMethod,
     depth: usize,
 ) -> NodeId {
-    let should_be_terminal = depth == 0
-        || (method == TreeMethod::Grow && b.rng().random::<f32>() < cfg.p_terminal);
+    let should_be_terminal =
+        depth == 0 || (method == TreeMethod::Grow && b.rng().random::<f32>() < cfg.p_terminal);
 
     if should_be_terminal {
         emit_terminal(b, cfg)
