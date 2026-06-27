@@ -4,7 +4,7 @@ use crate::{
     ast::{ExprArena, ExprNode, NodeKind},
     gp::{Genome, Individual},
     ops::OperationTable,
-    types::NodeId,
+    types::{NodeId, ParameterId, RootId, Scalar},
 };
 
 use super::{Mutation, MutationContext};
@@ -12,15 +12,13 @@ use super::{Mutation, MutationContext};
 fn copy_over_replacing<G: Genome + 'static>(
     src_node: NodeId,
     target: NodeId,
-    mutation: &dyn Mutation<G>,
+    replacement: Option<NodeId>,
     ctx: &mut MutationContext<'_, G>,
 ) -> NodeId {
     if src_node == target {
-        // A passthrough mutation returns `None`; copy the target subtree
-        // verbatim (preserving tags) in that case.
-        return mutation
-            .apply(target, ctx)
-            .unwrap_or_else(|| ctx.copy_subtree(target));
+        // A passthrough mutation yields `None`; copy the target subtree verbatim
+        // (preserving tags) in that case.
+        return replacement.unwrap_or_else(|| ctx.copy_subtree(target));
     }
 
     // Bind arena as a copy of the shared ref before borrowing `ctx` mutably below.
@@ -34,12 +32,12 @@ fn copy_over_replacing<G: Genome + 'static>(
 
     let new_kind = match kind {
         NodeKind::Unary { value, op } => {
-            let v = copy_over_replacing(value, target, mutation, ctx);
+            let v = copy_over_replacing(value, target, replacement, ctx);
             NodeKind::Unary { value: v, op }
         }
         NodeKind::Binary { left, right, op } => {
-            let l = copy_over_replacing(left, target, mutation, ctx);
-            let r = copy_over_replacing(right, target, mutation, ctx);
+            let l = copy_over_replacing(left, target, replacement, ctx);
+            let r = copy_over_replacing(right, target, replacement, ctx);
             NodeKind::Binary {
                 left: l,
                 right: r,
@@ -51,6 +49,40 @@ fn copy_over_replacing<G: Genome + 'static>(
 
     // Preserve tag: this node is on the unchanged path.
     ctx.dest.add(ExprNode::new(new_kind, tag))
+}
+
+/// Compact `params` to only the parameters still referenced by the tree at
+/// `root`, renumbering survivors densely and rewriting the `Parameter` node ids
+/// in place. Survivors are numbered in first-encounter (DFS pre-order) order.
+fn eliminate_dead_params<Tag: Clone>(
+    arena: &mut ExprArena<Tag>,
+    params: &mut Vec<Scalar>,
+    root: RootId,
+) {
+    // Collect node ids first; the walk borrows the arena immutably.
+    let ids: Vec<NodeId> = arena.walk_expr(root).into_iter().flatten().collect();
+
+    // First-encounter remap: old ParameterId -> new dense id, building new vec.
+    let mut remap: Vec<Option<ParameterId>> = vec![None; params.len()];
+    let mut new_params: Vec<Scalar> = Vec::new();
+    for &id in &ids {
+        if let NodeKind::Parameter(pid) = arena.get_node(id).unwrap().kind {
+            if remap[*pid as usize].is_none() {
+                remap[*pid as usize] = Some(ParameterId::from(new_params.len() as u16));
+                new_params.push(params[*pid as usize]);
+            }
+        }
+    }
+
+    // Rewrite parameter node ids in place.
+    for &id in &ids {
+        if let NodeKind::Parameter(pid) = arena.get_node(id).unwrap().kind {
+            let new = remap[*pid as usize].unwrap();
+            arena.get_node_mut(id).unwrap().kind = NodeKind::Parameter(new);
+        }
+    }
+
+    *params = new_params;
 }
 
 /// Weighted, pluggable registry of mutations.
@@ -93,7 +125,7 @@ impl<G: Genome + 'static> Mutator<G> {
     ) -> Option<Individual<G>> {
         let root_node = source.get_root(parent.root)?;
 
-        // Collect mutable candidate nodes from the Genome.
+        // Collect mutable candidate nodes from the genome of the invidivual.
         let candidates: Vec<NodeId> = G::mutation_targets(parent.root, source);
         if candidates.is_empty() {
             return None;
@@ -139,14 +171,24 @@ impl<G: Genome + 'static> Mutator<G> {
         // Pick a target uniformly.
         let target = targets[rng.random_range(0..targets.len())];
 
-        // Clone parent params — offspring gets its own copy.
+        // Clone parent params so the offspring gets an owned copy
         let mut params = parent.parameters.clone();
 
         let mut ctx = MutationContext::new(source, ops, rng, dest, &mut params);
-        let new_root_node = copy_over_replacing(root_node, target, mutation, &mut ctx);
+
+        let new_subtree_node = mutation.apply(target, &mut ctx);
+        let changed_structure = new_subtree_node.is_some();
+
+        let new_root_node = copy_over_replacing(root_node, target, new_subtree_node, &mut ctx);
         drop(ctx);
 
         let new_root = dest.add_root(new_root_node);
+
+        // run dead param elimination if mutation changed expression structure
+        if changed_structure {
+            eliminate_dead_params(dest, &mut params, new_root);
+        }
+
         Some(Individual::new(new_root, params))
     }
 }
@@ -161,7 +203,7 @@ mod tests {
     use rand::rngs::StdRng;
 
     use crate::{
-        ast::{ExprArena, ExprNode},
+        ast::{ExprArena, ExprNode, NodeKind},
         gp::{
             Individual,
             mutation::{
@@ -188,6 +230,24 @@ mod tests {
         let add = arena.add(ExprNode::new_binary(p0, p1, OperationId::from(0u16), ()));
         let root = arena.add_root(add);
         (root, vec![1.0, 2.0])
+    }
+
+    /// Run eliminate_dead_params, collect surviving
+    /// ParameterIds (in tree walk order) and the surviving param values.
+    fn run_elim(
+        arena: &mut ExprArena<()>,
+        params: &mut Vec<Scalar>,
+        root: RootId,
+    ) -> (Vec<u16>, Vec<Scalar>) {
+        super::eliminate_dead_params(arena, params, root);
+        let ids: Vec<u16> = arena
+            .iter_expr_nodes(root)
+            .filter_map(|(_, n)| match n.kind {
+                NodeKind::Parameter(pid) => Some(*pid),
+                _ => None,
+            })
+            .collect();
+        (ids, params.clone())
     }
 
     #[test]
@@ -326,6 +386,117 @@ mod tests {
 
         // Must not panic.
         let _ = eval_ctx.eval_batch(root_node, inputs.view(), params_arr.view());
+    }
+
+    #[test]
+    fn dead_params_all_live_unchanged() {
+        // add(param(0), param(1)) — both params are used, nothing to eliminate.
+        let mut arena: ExprArena<()> = ExprArena::new();
+        let p0 = arena.add(ExprNode::new_parameter(ParameterId::from(0u16), ()));
+        let p1 = arena.add(ExprNode::new_parameter(ParameterId::from(1u16), ()));
+        let add = arena.add(ExprNode::new_binary(p0, p1, OperationId::from(0u16), ()));
+        let root = arena.add_root(add);
+        let mut params = vec![1.0_f32, 2.0_f32];
+
+        let (ids, surviving) = run_elim(&mut arena, &mut params, root);
+        assert_eq!(ids, vec![0, 1]);
+        assert_eq!(surviving, vec![1.0, 2.0]);
+    }
+
+    #[test]
+    fn dead_params_trailing_param_eliminated() {
+        // add(param(0), variable(0)) — param(1) is in the params vec but not used.
+        let mut arena: ExprArena<()> = ExprArena::new();
+        use crate::types::VariableId;
+        let p0 = arena.add(ExprNode::new_parameter(ParameterId::from(0u16), ()));
+        let v0 = arena.add(ExprNode::new_variable(VariableId::from(0u16), ()));
+        let add = arena.add(ExprNode::new_binary(p0, v0, OperationId::from(0u16), ()));
+        let root = arena.add_root(add);
+        let mut params = vec![1.0_f32, 99.0_f32];
+
+        let (ids, surviving) = run_elim(&mut arena, &mut params, root);
+        assert_eq!(ids, vec![0]);
+        assert_eq!(surviving, vec![1.0]);
+    }
+
+    #[test]
+    fn dead_params_leading_param_removed() {
+        // add(param(1), variable(0)) — param(0) is unused; param(1) should become param(0).
+        let mut arena: ExprArena<()> = ExprArena::new();
+        use crate::types::VariableId;
+        let p1 = arena.add(ExprNode::new_parameter(ParameterId::from(1u16), ()));
+        let v0 = arena.add(ExprNode::new_variable(VariableId::from(0u16), ()));
+        let add = arena.add(ExprNode::new_binary(p1, v0, OperationId::from(0u16), ()));
+        let root = arena.add_root(add);
+        let mut params = vec![99.0_f32, 2.0_f32];
+
+        let (ids, surviving) = run_elim(&mut arena, &mut params, root);
+        assert_eq!(ids, vec![0]);
+        assert_eq!(surviving, vec![2.0]);
+    }
+
+    #[test]
+    fn dead_params_middle_gap_eliminated() {
+        // add(param(0), param(2)) — param(1) is unused; param(2) should become param(1).
+        let mut arena: ExprArena<()> = ExprArena::new();
+        let p0 = arena.add(ExprNode::new_parameter(ParameterId::from(0u16), ()));
+        let p2 = arena.add(ExprNode::new_parameter(ParameterId::from(2u16), ()));
+        let add = arena.add(ExprNode::new_binary(p0, p2, OperationId::from(0u16), ()));
+        let root = arena.add_root(add);
+        let mut params = vec![1.0_f32, 99.0_f32, 3.0_f32];
+
+        let (ids, surviving) = run_elim(&mut arena, &mut params, root);
+        assert_eq!(ids, vec![0, 1]);
+        assert_eq!(surviving, vec![1.0, 3.0]);
+    }
+
+    #[test]
+    fn dead_params_all_dead_clears_params() {
+        // variable(0) — no parameters at all; params vec should be cleared.
+        let mut arena: ExprArena<()> = ExprArena::new();
+        use crate::types::VariableId;
+        let v = arena.add(ExprNode::new_variable(VariableId::from(0u16), ()));
+        let root = arena.add_root(v);
+        let mut params = vec![1.0_f32, 2.0_f32, 3.0_f32];
+
+        let (ids, surviving) = run_elim(&mut arena, &mut params, root);
+        assert!(ids.is_empty());
+        assert!(surviving.is_empty());
+    }
+
+    #[test]
+    fn dead_params_duplicate_reference_preserved_once() {
+        // add(param(0), param(0)) — same param referenced twice; should appear once in params.
+        let mut arena: ExprArena<()> = ExprArena::new();
+        let p0a = arena.add(ExprNode::new_parameter(ParameterId::from(0u16), ()));
+        let p0b = arena.add(ExprNode::new_parameter(ParameterId::from(0u16), ()));
+        let add = arena.add(ExprNode::new_binary(p0a, p0b, OperationId::from(0u16), ()));
+        let root = arena.add_root(add);
+        let mut params = vec![42.0_f32];
+
+        let (ids, surviving) = run_elim(&mut arena, &mut params, root);
+        // Both nodes still refer to pid 0; params shrinks to just the one entry.
+        assert_eq!(ids, vec![0, 0]);
+        assert_eq!(surviving, vec![42.0]);
+    }
+
+    #[test]
+    fn dead_params_numbering_follows_dfs_preorder() {
+        // add(param(1), param(0)) — left child is param(1), right is param(0).
+        // DFS pre-order visits left before right, so param(1) is seen first
+        // and should become new param(0); param(0) becomes new param(1).
+        let mut arena: ExprArena<()> = ExprArena::new();
+        let p1 = arena.add(ExprNode::new_parameter(ParameterId::from(1u16), ()));
+        let p0 = arena.add(ExprNode::new_parameter(ParameterId::from(0u16), ()));
+        let add = arena.add(ExprNode::new_binary(p1, p0, OperationId::from(0u16), ()));
+        let root = arena.add_root(add);
+        let mut params = vec![10.0_f32, 20.0_f32];
+
+        let (ids, surviving) = run_elim(&mut arena, &mut params, root);
+        // left param (old 1, value 20.0) → new id 0
+        // right param (old 0, value 10.0) → new id 1
+        assert_eq!(ids, vec![0, 1]);
+        assert_eq!(surviving, vec![20.0, 10.0]);
     }
 
     // ---------------------------------------------------------------------------

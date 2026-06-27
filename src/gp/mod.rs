@@ -51,32 +51,6 @@ pub struct Population<G: Genome> {
     individuals: Vec<Individual<G>>,
 }
 
-impl<G: Genome> Population<G> {
-    pub fn new(individuals: Vec<Individual<G>>) -> Self {
-        Self { individuals }
-    }
-
-    pub fn len(&self) -> usize {
-        self.individuals.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.individuals.is_empty()
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &Individual<G>> {
-        self.individuals.iter()
-    }
-
-    pub fn individuals(&self) -> &[Individual<G>] {
-        &self.individuals
-    }
-
-    pub fn into_individuals(self) -> Vec<Individual<G>> {
-        self.individuals
-    }
-}
-
 enum CurrentBuffer {
     A,
     B,
@@ -194,6 +168,32 @@ impl<'a, G: Genome> NodeBuilder<G> for IndividualBuilder<'a, G> {
         let id = ParameterId::from(self.params.len() as u16);
         self.params.push(value);
         id
+    }
+}
+
+impl<G: Genome> Population<G> {
+    pub fn new(individuals: Vec<Individual<G>>) -> Self {
+        Self { individuals }
+    }
+
+    pub fn len(&self) -> usize {
+        self.individuals.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.individuals.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Individual<G>> {
+        self.individuals.iter()
+    }
+
+    pub fn individuals(&self) -> &[Individual<G>] {
+        &self.individuals
+    }
+
+    pub fn into_individuals(self) -> Vec<Individual<G>> {
+        self.individuals
     }
 }
 
