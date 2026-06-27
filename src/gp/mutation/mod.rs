@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::Genome;
-use super::build::NodeBuilder;
+use super::builder::NodeBuilder;
 
 /// A pluggable tree mutation.
 ///
@@ -110,10 +110,8 @@ impl<'a, G: Genome> NodeBuilder<G> for MutationContext<'a, G> {
         self.ops
     }
 
-    /// Emit a new node with a fresh tag (structurally new or value-changed).
-    fn emit(&mut self, kind: NodeKind) -> NodeId {
-        let tag = G::get_tag_for_node(kind);
-        self.dest.add(ExprNode::new(kind, tag))
+    fn emit(&mut self, node: ExprNode<G::Tag>) -> NodeId {
+        self.dest.add(node)
     }
 
     /// Allocate a new parameter slot initialised to `value` and return its id.

@@ -7,65 +7,12 @@
 
 use rand::RngCore;
 
-use crate::{
-    ast::{ExprArena, NodeKind},
-    ops::OperationTable,
-    types::{NodeId, ParameterId, Scalar},
-};
+use crate::{ast::ExprArena, ops::OperationTable};
 
 use super::{
-    Genome, Individual, emit_node,
-    build::NodeBuilder,
+    Genome, Individual, IndividualBuilder,
     subtree::{TreeGenConfig, TreeMethod, gen_tree},
 };
-
-/// Node builder used while constructing fresh individuals from scratch.
-///
-/// Unlike [`MutationContext`](crate::gp::mutation::MutationContext), there is no
-/// parent/source arena: nodes are emitted directly into `dest` and parameters
-/// are allocated into a fresh `params` vector owned by the caller.
-pub struct InitContext<'a, G: Genome> {
-    dest: &'a mut ExprArena<G::Tag>,
-    ops: &'a OperationTable,
-    rng: &'a mut dyn RngCore,
-    params: &'a mut Vec<Scalar>,
-}
-
-impl<'a, G: Genome> InitContext<'a, G> {
-    pub fn new(
-        dest: &'a mut ExprArena<G::Tag>,
-        ops: &'a OperationTable,
-        rng: &'a mut dyn RngCore,
-        params: &'a mut Vec<Scalar>,
-    ) -> Self {
-        Self {
-            dest,
-            ops,
-            rng,
-            params,
-        }
-    }
-}
-
-impl<'a, G: Genome> NodeBuilder<G> for InitContext<'a, G> {
-    fn rng(&mut self) -> &mut dyn RngCore {
-        self.rng
-    }
-
-    fn ops(&self) -> &OperationTable {
-        self.ops
-    }
-
-    fn emit(&mut self, kind: NodeKind) -> NodeId {
-        emit_node::<G>(self.dest, kind)
-    }
-
-    fn new_parameter(&mut self, value: Scalar) -> ParameterId {
-        let id = ParameterId::from(self.params.len() as u16);
-        self.params.push(value);
-        id
-    }
-}
 
 /// Strategy used to populate the initial generation.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -163,15 +110,10 @@ pub fn init_population_into<G: Genome>(
 
     for i in 0..cfg.size {
         let (method, depth) = plan_individual(cfg, i);
-
-        let mut params: Vec<Scalar> = Vec::new();
-        let root_node = {
-            let mut ictx = InitContext::<G>::new(arena, ops, rng, &mut params);
-            gen_tree(&mut ictx, &cfg.tuning, method, depth)
-        };
-
-        let root = arena.add_root(root_node);
-        individuals.push(Individual::new(root, params));
+        let mut b = IndividualBuilder::<G>::new(arena, ops, rng);
+        let root_node = gen_tree(&mut b, &cfg.tuning, method, depth);
+        let (individual, _) = b.finish(root_node);
+        individuals.push(individual);
     }
 
     Population::new(individuals)

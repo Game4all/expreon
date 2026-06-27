@@ -4,29 +4,35 @@ use rand::RngCore;
 
 use crate::{
     ast::{ExprArena, ExprNode, NodeKind},
+    gp::builder::NodeBuilder,
     ops::OperationTable,
     types::{NodeId, ParameterId, RootId, Scalar},
 };
 
-pub mod build;
+pub mod builder;
 pub mod init;
 pub mod mutation;
 pub mod subtree;
 
-pub use init::{InitMethod, Population, PopulationConfig};
+pub use init::{Population, PopulationConfig};
 
 /// Base trait for a genome.
+///
+/// A genome may expose an additional tag type used to control what parts can explicitly be modified by overriding [`Self::mutation_targets`]
 pub trait Genome: Clone {
     type Tag: Clone;
 
     /// Returns a list of potential mutation targets for this individual genome.
-    fn mutation_targets(root: RootId, arena: &ExprArena<Self::Tag>) -> Vec<NodeId>;
+    fn mutation_targets(root: RootId, arena: &ExprArena<Self::Tag>) -> Vec<NodeId> {
+        arena.walk_expr(root).unwrap().collect()
+    }
 
     /// Gets a tag to attach to a new or structurally-changed expression node.
     fn get_tag_for_node(kind: NodeKind) -> Self::Tag;
 }
 
 /// A single individual in the population.
+/// Holds a reference to its root expression node and its parameters
 pub struct Individual<G: Genome> {
     pub root: RootId,
     pub parameters: Vec<Scalar>,
@@ -55,6 +61,16 @@ pub struct Context<G: Genome> {
     arena_b: ExprArena<G::Tag>,
     current_buffer: CurrentBuffer,
     pub operations: OperationTable,
+}
+
+/// A `NodeBuilder` returned by [`Context::builder`] for constructing a single
+/// individual by hand. Call [`IndividualBuilder::finish`] to register the root
+/// and obtain the [`Individual`].
+pub struct IndividualBuilder<'a, G: Genome> {
+    arena: &'a mut ExprArena<G::Tag>,
+    ops: &'a OperationTable,
+    rng: &'a mut dyn RngCore,
+    params: Vec<Scalar>,
 }
 
 impl<G: Genome> Context<G> {
@@ -99,6 +115,17 @@ impl<G: Genome> Context<G> {
         };
     }
 
+    /// Returns a builder for constructing a single individual into the active
+    /// (source) arena. Call [`IndividualBuilder::finish`] once the root node is
+    /// ready to register the root and obtain the [`Individual`].
+    pub fn builder<'a>(&'a mut self, rng: &'a mut dyn RngCore) -> IndividualBuilder<'a, G> {
+        let arena = match self.current_buffer {
+            CurrentBuffer::A => &mut self.arena_a,
+            CurrentBuffer::B => &mut self.arena_b,
+        };
+        IndividualBuilder::new(arena, &self.operations, rng)
+    }
+
     /// Builds an initial population into the active (source) arena and returns
     /// it. This is the entry point for seeding a GP run before any mutation.
     pub fn init_population(
@@ -110,34 +137,50 @@ impl<G: Genome> Context<G> {
             CurrentBuffer::A => &mut self.arena_a,
             CurrentBuffer::B => &mut self.arena_b,
         };
+
         init::init_population_into::<G>(arena, &self.operations, cfg, rng)
     }
 }
 
-/// A helper to add nodes to an arena with automatic tag generation via `G`.
-pub(crate) fn emit_node<G: Genome>(arena: &mut ExprArena<G::Tag>, kind: NodeKind) -> NodeId {
-    let tag = G::get_tag_for_node(kind);
-    arena.add(ExprNode::new(kind, tag))
+impl<'a, G: Genome> IndividualBuilder<'a, G> {
+    pub(crate) fn new(
+        arena: &'a mut ExprArena<G::Tag>,
+        ops: &'a OperationTable,
+        rng: &'a mut dyn RngCore,
+    ) -> Self {
+        Self {
+            arena,
+            ops,
+            rng,
+            params: Vec::new(),
+        }
+    }
+
+    /// Register `root_node` as an expression root and return the finished
+    /// individual. Consumes the builder.
+    pub fn finish(self, root_node: NodeId) -> (Individual<G>, RootId) {
+        let root = self.arena.add_root(root_node);
+        (Individual::new(root, self.params), root)
+    }
 }
 
-/// A helper to add a node to an arena preserving an existing tag.
-pub(crate) fn preserve_node<G: Genome>(
-    arena: &mut ExprArena<G::Tag>,
-    kind: NodeKind,
-    tag: G::Tag,
-) -> NodeId {
-    arena.add(ExprNode::new(kind, tag))
-}
+impl<'a, G: Genome> NodeBuilder<G> for IndividualBuilder<'a, G> {
+    fn rng(&mut self) -> &mut dyn RngCore {
+        self.rng
+    }
 
-/// Resolves a `ParameterId` for `Individual`, allocating a new slot if needed.
-pub(crate) fn resolve_or_alloc_param(params: &mut Vec<Scalar>, id: ParameterId) -> ParameterId {
-    let idx = *id as usize;
-    if idx < params.len() {
+    fn ops(&self) -> &OperationTable {
+        self.ops
+    }
+
+    fn emit(&mut self, node: ExprNode<G::Tag>) -> NodeId {
+        self.arena.add(node)
+    }
+
+    fn new_parameter(&mut self, value: Scalar) -> ParameterId {
+        let id = ParameterId::from(self.params.len() as u16);
+        self.params.push(value);
         id
-    } else {
-        let new_id = ParameterId::from(params.len() as u16);
-        params.push(0.0);
-        new_id
     }
 }
 
@@ -151,10 +194,6 @@ pub(crate) mod test_genome {
 
     impl Genome for TestSimpleGenome {
         type Tag = ();
-
-        fn mutation_targets(root: RootId, arena: &ExprArena<()>) -> Vec<NodeId> {
-            arena.walk_expr(root).unwrap().collect()
-        }
 
         fn get_tag_for_node(_kind: NodeKind) -> () {}
     }

@@ -1,11 +1,11 @@
 use rand::Rng;
 
 use crate::{
-    ast::NodeKind,
+    ast::{ExprNode, NodeKind},
     types::{NodeId, Scalar, VariableId},
 };
 
-use super::{Genome, build::NodeBuilder};
+use super::{Genome, builder::NodeBuilder};
 
 /// Tuning parameters for the random tree generators, shared by the `grow` and
 /// `full` methods. Depth is supplied separately at the call site.
@@ -74,12 +74,14 @@ fn emit_terminal<G: Genome, B: NodeBuilder<G>>(b: &mut B, cfg: &TreeGenConfig) -
     // 50/50 between a variable and a new constant parameter.
     if cfg.n_variables > 0 && b.rng().random::<bool>() {
         let var = VariableId::from(b.rng().random_range(0..cfg.n_variables));
-        b.emit(NodeKind::Variable(var))
+        let kind = NodeKind::Variable(var);
+        b.emit(ExprNode::new(kind, G::get_tag_for_node(kind)))
     } else {
         let (lo, hi) = cfg.const_range;
         let value: Scalar = b.rng().random_range(lo..hi);
         let param_id = b.new_parameter(value);
-        b.emit(NodeKind::Parameter(param_id))
+        let kind = NodeKind::Parameter(param_id);
+        b.emit(ExprNode::new(kind, G::get_tag_for_node(kind)))
     }
 }
 
@@ -104,11 +106,13 @@ fn emit_operator<G: Genome, B: NodeBuilder<G>>(
         let op = b.pick_random_binary_op();
         let left = gen_tree(b, cfg, method, depth - 1);
         let right = gen_tree(b, cfg, method, depth - 1);
-        b.emit(NodeKind::Binary { left, right, op })
+        let kind = NodeKind::Binary { left, right, op };
+        b.emit(ExprNode::new(kind, G::get_tag_for_node(kind)))
     } else {
         let op = b.pick_random_unary_op();
         let value = gen_tree(b, cfg, method, depth - 1);
-        b.emit(NodeKind::Unary { value, op })
+        let kind = NodeKind::Unary { value, op };
+        b.emit(ExprNode::new(kind, G::get_tag_for_node(kind)))
     }
 }
 

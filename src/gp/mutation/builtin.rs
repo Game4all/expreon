@@ -1,10 +1,10 @@
 use rand_distr::{Distribution, Normal};
 
 use crate::{
-    ast::NodeKind,
+    ast::{ExprNode, NodeKind},
     gp::{
         Genome,
-        build::NodeBuilder,
+        builder::NodeBuilder,
         subtree::{GrowSubtreeConfig, gen_subtree},
     },
     types::{NodeId, Scalar},
@@ -35,17 +35,15 @@ impl<G: Genome> Mutation<G> for PointMutation {
             NodeKind::Unary { value, .. } => {
                 let v = ctx.copy_subtree(value);
                 let op = ctx.pick_random_unary_op();
-                ctx.emit(NodeKind::Unary { value: v, op })
+                let kind = NodeKind::Unary { value: v, op };
+                ctx.emit(ExprNode::new(kind, G::get_tag_for_node(kind)))
             }
             NodeKind::Binary { left, right, .. } => {
                 let l = ctx.copy_subtree(left);
                 let r = ctx.copy_subtree(right);
                 let op = ctx.pick_random_binary_op();
-                ctx.emit(NodeKind::Binary {
-                    left: l,
-                    right: r,
-                    op,
-                })
+                let kind = NodeKind::Binary { left: l, right: r, op };
+                ctx.emit(ExprNode::new(kind, G::get_tag_for_node(kind)))
             }
             _ => unreachable!("guarded by applies_to"),
         };
