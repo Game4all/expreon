@@ -1,13 +1,19 @@
 use std::marker::PhantomData;
 
+use rand::RngCore;
+
 use crate::{
     ast::{ExprArena, ExprNode, NodeKind},
     ops::OperationTable,
     types::{NodeId, ParameterId, RootId, Scalar},
 };
 
+pub mod build;
+pub mod init;
 pub mod mutation;
 pub mod subtree;
+
+pub use init::{InitMethod, Population, PopulationConfig};
 
 /// Base trait for a genome.
 pub trait Genome: Clone {
@@ -91,6 +97,20 @@ impl<G: Genome> Context<G> {
                 CurrentBuffer::A
             }
         };
+    }
+
+    /// Builds an initial population into the active (source) arena and returns
+    /// it. This is the entry point for seeding a GP run before any mutation.
+    pub fn init_population(
+        &mut self,
+        cfg: &PopulationConfig,
+        rng: &mut dyn RngCore,
+    ) -> Population<G> {
+        let arena = match self.current_buffer {
+            CurrentBuffer::A => &mut self.arena_a,
+            CurrentBuffer::B => &mut self.arena_b,
+        };
+        init::init_population_into::<G>(arena, &self.operations, cfg, rng)
     }
 }
 

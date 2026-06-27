@@ -168,7 +168,7 @@ mod tests {
                 MutationContext, Mutator,
                 builtin::{ParamJitter, PointMutation, SubtreeMutation},
             },
-            subtree::GrowSubtreeConfig,
+            subtree::{GrowSubtreeConfig, TreeGenConfig},
             test_genome::TestSimpleGenome,
         },
         ops::{OperationTableBuilder, builtin::MathBaseOps},
@@ -296,9 +296,11 @@ mod tests {
 
         let cfg = GrowSubtreeConfig {
             max_depth: 3,
-            p_terminal: 0.3,
-            n_variables: 2,
-            const_range: (-1.0, 1.0),
+            tuning: TreeGenConfig {
+                p_terminal: 0.3,
+                n_variables: 2,
+                const_range: (-1.0, 1.0),
+            },
         };
 
         let mut mutator: Mutator<TestSimpleGenome> = Mutator::new();

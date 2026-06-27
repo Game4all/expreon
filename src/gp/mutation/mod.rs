@@ -3,17 +3,17 @@ pub mod mutator;
 
 pub use mutator::Mutator;
 
-use rand::seq::IteratorRandom;
 use rand::RngCore;
 
 use crate::types::Scalar;
 use crate::{
     ast::{ExprArena, ExprNode, NodeKind},
     ops::OperationTable,
-    types::{NodeId, OperationId, ParameterId},
+    types::{NodeId, ParameterId},
 };
 
 use super::Genome;
+use super::build::NodeBuilder;
 
 /// A pluggable tree mutation.
 ///
@@ -61,12 +61,6 @@ impl<'a, G: Genome> MutationContext<'a, G> {
         }
     }
 
-    /// Emit a new node with a fresh tag (structurally new or value-changed).
-    pub fn emit(&mut self, kind: NodeKind) -> NodeId {
-        let tag = G::get_tag_for_node(kind);
-        self.dest.add(ExprNode::new(kind, tag))
-    }
-
     /// Verbatim deep copy of a source subtree, preserving each node's tag.
     pub fn copy_subtree(&mut self, src: NodeId) -> NodeId {
         // Bind the &ExprArena as a plain reference so we can re-borrow `self` mutably.
@@ -96,22 +90,6 @@ impl<'a, G: Genome> MutationContext<'a, G> {
         self.dest.add(ExprNode::new(new_kind, tag))
     }
 
-    /// Pick a random unary operator from the operation table and return its ID.
-    pub fn random_unary_op(&mut self) -> OperationId {
-        self.ops
-            .iter_unary_ops()
-            .choose(self.rng)
-            .expect("no unary ops registered")
-    }
-
-    /// Pick a random binary operator from the operation table and return its ID.
-    pub fn random_binary_op(&mut self) -> OperationId {
-        self.ops
-            .iter_binary_ops()
-            .choose(self.rng)
-            .expect("no binary ops registered")
-    }
-
     /// Read the current value of a parameter.
     pub fn get_parameter(&self, id: ParameterId) -> Scalar {
         self.params[*id as usize]
@@ -121,9 +99,25 @@ impl<'a, G: Genome> MutationContext<'a, G> {
     pub fn set_parameter(&mut self, id: ParameterId, value: Scalar) {
         self.params[*id as usize] = value;
     }
+}
+
+impl<'a, G: Genome> NodeBuilder<G> for MutationContext<'a, G> {
+    fn rng(&mut self) -> &mut dyn RngCore {
+        self.rng
+    }
+
+    fn ops(&self) -> &OperationTable {
+        self.ops
+    }
+
+    /// Emit a new node with a fresh tag (structurally new or value-changed).
+    fn emit(&mut self, kind: NodeKind) -> NodeId {
+        let tag = G::get_tag_for_node(kind);
+        self.dest.add(ExprNode::new(kind, tag))
+    }
 
     /// Allocate a new parameter slot initialised to `value` and return its id.
-    pub fn new_parameter(&mut self, value: Scalar) -> ParameterId {
+    fn new_parameter(&mut self, value: Scalar) -> ParameterId {
         let id = ParameterId::from(self.params.len() as u16);
         self.params.push(value);
         id

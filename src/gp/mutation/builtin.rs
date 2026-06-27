@@ -4,6 +4,7 @@ use crate::{
     ast::NodeKind,
     gp::{
         Genome,
+        build::NodeBuilder,
         subtree::{GrowSubtreeConfig, gen_subtree},
     },
     types::{NodeId, Scalar},
@@ -33,13 +34,13 @@ impl<G: Genome> Mutation<G> for PointMutation {
         let new_root = match node.kind {
             NodeKind::Unary { value, .. } => {
                 let v = ctx.copy_subtree(value);
-                let op = ctx.random_unary_op();
+                let op = ctx.pick_random_unary_op();
                 ctx.emit(NodeKind::Unary { value: v, op })
             }
             NodeKind::Binary { left, right, .. } => {
                 let l = ctx.copy_subtree(left);
                 let r = ctx.copy_subtree(right);
-                let op = ctx.random_binary_op();
+                let op = ctx.pick_random_binary_op();
                 ctx.emit(NodeKind::Binary {
                     left: l,
                     right: r,
@@ -54,7 +55,7 @@ impl<G: Genome> Mutation<G> for PointMutation {
 
 // ---------------------------------------------------------------------------
 // SubtreeMutation — replace a target subtree with a freshly grown random tree
-    // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 
 /// Replaces the target node (and its entire subtree) with a randomly generated
 /// subtree produced by the `grow` generator.
@@ -93,6 +94,7 @@ impl<G: Genome> Mutation<G> for ParamJitter {
             .source
             .get_node(target)
             .expect("invalid target for ParamJitter");
+
         let NodeKind::Parameter(param_id) = node.kind else {
             unreachable!("guarded by applies_to");
         };
