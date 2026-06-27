@@ -67,6 +67,11 @@ impl<Tag: Clone> ExprArena<Tag> {
         self.nodes.get(usize::from(node_id))
     }
 
+    /// Returns a mutable reference to the provided node.
+    pub fn get_node_mut(&mut self, node_id: NodeId) -> Option<&mut ExprNode<Tag>> {
+        self.nodes.get_mut(usize::from(node_id))
+    }
+
     /// Returns the Node Id for the provided root id.
     pub fn get_root(&self, root_id: RootId) -> Option<NodeId> {
         self.roots.get(usize::from(root_id)).copied()
@@ -245,5 +250,25 @@ mod tests {
             }
             _ => panic!("expected parameter node"),
         }
+    }
+
+    #[test]
+    fn test_get_node_mut() {
+        let mut arena = ExprArena::new();
+
+        let p = arena.add(ExprNode::new_parameter(ParameterId::from(123), ()));
+
+        assert!(
+            matches!(arena.get_node(p).unwrap().kind, NodeKind::Parameter(i) if i == ParameterId::from(123))
+        );
+
+        {
+            let node_mut = arena.get_node_mut(p).unwrap();
+            node_mut.kind = NodeKind::Parameter(ParameterId::from(234));
+        }
+
+        assert!(
+            matches!(arena.get_node(p).unwrap().kind, NodeKind::Parameter(i) if i == ParameterId::from(234))
+        );
     }
 }

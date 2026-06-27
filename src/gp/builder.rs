@@ -1,12 +1,12 @@
 use rand::{Rng, RngCore};
 
 use crate::{
-    ast::{ExprArena, ExprNode},
+    ast::ExprNode,
     ops::OperationTable,
-    types::{NodeId, OperationId, ParameterId, RootId, Scalar},
+    types::{NodeId, OperationId, ParameterId, Scalar},
 };
 
-use super::{Genome, Individual};
+use super::Genome;
 
 /// The minimal node-construction surface required to build expression trees.
 /// Provides methods to emit nodes in an arena and helpers to create new parameters.
