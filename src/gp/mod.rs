@@ -19,6 +19,10 @@ pub mod subtree;
 pub trait Genome: Clone {
     type Tag: Clone;
 
+    /// Dimension of the input vector: the number of input variables available
+    /// to expressions built from this genome. Valid variable IDs are `0..INPUT_DIM`.
+    const INPUT_DIM: u16;
+
     /// Returns a list of potential mutation targets for this individual genome.
     fn mutation_targets(root: RootId, arena: &ExprArena<Self::Tag>) -> Vec<NodeId> {
         arena.walk_expr(root).unwrap().collect()
@@ -207,6 +211,7 @@ pub(crate) mod test_genome {
 
     impl Genome for TestSimpleGenome {
         type Tag = ();
+        const INPUT_DIM: u16 = 2;
 
         fn get_tag_for_node(_kind: NodeKind) -> () {}
     }

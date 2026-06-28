@@ -29,7 +29,15 @@ impl<'a, 'b, Tag: Clone> EvalContext<'a, 'b, Tag> {
             .expect("node_id not present in arena");
 
         match node.kind {
-            NodeKind::Variable(var_id) => inputs[*var_id as usize],
+            NodeKind::Variable(var_id) => {
+                let idx = *var_id as usize;
+                assert!(
+                    idx < inputs.len(),
+                    "variable {var_id} out of range for input of length {}",
+                    inputs.len()
+                );
+                inputs[idx]
+            }
             NodeKind::Parameter(param_id) => parameters[*param_id as usize],
             NodeKind::Unary { value, op } => {
                 let val = self.eval(value, inputs, parameters);
@@ -63,7 +71,15 @@ impl<'a, 'b, Tag: Clone> EvalContext<'a, 'b, Tag> {
             .expect("node_id not present in arena");
 
         match node.kind {
-            NodeKind::Variable(var_id) => inputs.column(*var_id as usize).to_owned(),
+            NodeKind::Variable(var_id) => {
+                let idx = *var_id as usize;
+                assert!(
+                    idx < inputs.ncols(),
+                    "variable {var_id} out of range for input of length {}",
+                    inputs.ncols()
+                );
+                inputs.column(idx).to_owned()
+            }
             NodeKind::Parameter(param_id) => parameters.column(*param_id as usize).to_owned(),
             NodeKind::Unary { value, op } => {
                 let val = self.eval_batch(value, inputs, parameters);

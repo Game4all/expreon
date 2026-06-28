@@ -3,7 +3,7 @@ use rand::{Rng, RngCore};
 use crate::{
     ast::ExprNode,
     ops::OperationTable,
-    types::{NodeId, OperationId, ParameterId, Scalar},
+    types::{NodeId, OperationId, ParameterId, Scalar, VariableId},
 };
 
 use super::Genome;
@@ -37,5 +37,14 @@ pub trait NodeBuilder<G: Genome> {
         assert!(n > 0, "no binary ops registered");
         let idx = self.rng().random_range(0..n);
         self.ops().iter_binary_ops().nth(idx).unwrap()
+    }
+
+    /// Picks a random input variable ID in the range `0..G::INPUT_DIM`.
+    fn pick_variable(&mut self) -> VariableId {
+        assert!(
+            G::INPUT_DIM > 0,
+            "genome has no input variables (INPUT_DIM == 0)"
+        );
+        VariableId::from(self.rng().random_range(0..G::INPUT_DIM))
     }
 }

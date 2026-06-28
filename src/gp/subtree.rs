@@ -2,7 +2,7 @@ use rand::Rng;
 
 use crate::{
     ast::{ExprNode, NodeKind},
-    types::{NodeId, Scalar, VariableId},
+    types::{NodeId, Scalar},
 };
 
 use super::{Genome, builder::NodeBuilder};
@@ -12,8 +12,6 @@ use super::{Genome, builder::NodeBuilder};
 pub struct TreeGenConfig {
     /// Probability of emitting a terminal at a non-zero depth (grow only).
     pub p_terminal: f32,
-    /// Number of input variables available.
-    pub n_variables: u16,
     /// Range [lo, hi) for randomly-initialized constant parameters.
     pub const_range: (Scalar, Scalar),
 }
@@ -72,8 +70,8 @@ pub fn gen_subtree<G: Genome, B: NodeBuilder<G>>(
 
 fn emit_terminal<G: Genome, B: NodeBuilder<G>>(b: &mut B, cfg: &TreeGenConfig) -> NodeId {
     // 50/50 between a variable and a new constant parameter.
-    if cfg.n_variables > 0 && b.rng().random::<bool>() {
-        let var = VariableId::from(b.rng().random_range(0..cfg.n_variables));
+    if G::INPUT_DIM > 0 && b.rng().random::<bool>() {
+        let var = b.pick_variable();
         let kind = NodeKind::Variable(var);
         b.emit(ExprNode::new(kind, G::get_tag_for_node(kind)))
     } else {
@@ -152,7 +150,6 @@ mod tests {
             max_depth: 4,
             tuning: TreeGenConfig {
                 p_terminal: 0.3,
-                n_variables: 2,
                 const_range: (-1.0, 1.0),
             },
         };
@@ -174,7 +171,6 @@ mod tests {
             max_depth: 3,
             tuning: TreeGenConfig {
                 p_terminal: 0.4,
-                n_variables: 2,
                 const_range: (-1.0, 1.0),
             },
         };

@@ -254,7 +254,6 @@ mod tests {
             max_depth: 3,
             tuning: TreeGenConfig {
                 p_terminal: 0.3,
-                n_variables: 2,
                 const_range: (-1.0, 1.0),
             },
         };

@@ -19,6 +19,7 @@ struct SimpleGenome;
 
 impl Genome for SimpleGenome {
     type Tag = ();
+    const INPUT_DIM: u16 = 2;
 
     fn get_tag_for_node(_kind: NodeKind) -> () {}
 }
@@ -33,7 +34,6 @@ fn main() {
 
     let tuning = TreeGenConfig {
         p_terminal: 0.3,
-        n_variables: 2,
         const_range: (-1.0, 1.0),
     };
 
