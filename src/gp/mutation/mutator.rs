@@ -1,10 +1,10 @@
 use rand::{Rng, RngCore};
 
 use crate::{
-    ast::{ExprArena, ExprNode, NodeKind},
+    ast::ExprArena,
     gp::{Genome, Individual},
     ops::OperationTable,
-    types::{NodeId, ParameterId, RootId, Scalar},
+    types::NodeId,
 };
 
 use super::Mutation;

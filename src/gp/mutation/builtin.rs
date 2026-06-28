@@ -26,11 +26,12 @@ impl<G: Genome> Mutation<G> for PointMutation {
         matches!(kind, NodeKind::Unary { .. } | NodeKind::Binary { .. })
     }
 
-    fn apply(&self, target: NodeId, ctx: &mut MutationContext<'_, G>) -> Option<NodeId> {
-        let node = ctx
-            .source
-            .get_node(target)
-            .expect("invalid target for PointMutation");
+    fn apply(
+        &self,
+        _target: NodeId,
+        node: &ExprNode<G::Tag>,
+        ctx: &mut MutationContext<'_, G>,
+    ) -> Option<NodeId> {
         let new_root = match node.kind {
             NodeKind::Unary { value, .. } => {
                 let v = ctx.copy_subtree(value);
@@ -70,7 +71,12 @@ impl<G: Genome> Mutation<G> for SubtreeMutation {
         true // any node can be replaced
     }
 
-    fn apply(&self, _target: NodeId, ctx: &mut MutationContext<'_, G>) -> Option<NodeId> {
+    fn apply(
+        &self,
+        _target: NodeId,
+        _node: &ExprNode<G::Tag>,
+        ctx: &mut MutationContext<'_, G>,
+    ) -> Option<NodeId> {
         Some(gen_subtree(ctx, &self.grow, self.grow.max_depth))
     }
 }
@@ -91,12 +97,12 @@ impl<G: Genome> Mutation<G> for ParamJitter {
         matches!(kind, NodeKind::Parameter(_))
     }
 
-    fn apply(&self, target: NodeId, ctx: &mut MutationContext<'_, G>) -> Option<NodeId> {
-        let node = ctx
-            .source
-            .get_node(target)
-            .expect("invalid target for ParamJitter");
-
+    fn apply(
+        &self,
+        _target: NodeId,
+        node: &ExprNode<G::Tag>,
+        ctx: &mut MutationContext<'_, G>,
+    ) -> Option<NodeId> {
         let NodeKind::Parameter(param_id) = node.kind else {
             unreachable!("guarded by applies_to");
         };

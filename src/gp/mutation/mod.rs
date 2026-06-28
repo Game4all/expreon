@@ -25,15 +25,20 @@ pub trait Mutation<G: Genome>: 'static {
     /// Whether this mutation can act on a node of the given kind.
     fn applies_to(&self, kind: NodeKind) -> bool;
 
-    /// Emit a replacement subtree for `target` into the dest arena and return
-    /// its root `NodeId`. Use `ctx.copy_subtree` to carry over unchanged
-    /// children of an emitted node.
+    /// Emit a replacement subtree for the target into the dest arena and return
+    /// its root `NodeId`. `target` is the source node id (useful for splicing or
+    /// copying the target's own subtree) and `node` is the resolved source node.
     ///
-    /// Return `None` for a *passthrough* mutation — one that changes only side
-    /// data such as the parameter vector and leaves the tree structure intact.
-    /// The engine then copies the original `target` subtree verbatim
-    /// (preserving tags), so passthrough mutations need not touch the arena.
-    fn apply(&self, target: NodeId, ctx: &mut MutationContext<'_, G>) -> Option<NodeId>;
+    /// ### Notes
+    ///
+    /// - Use `ctx.copy_subtree` to carry over unchanged children of an emitted node.
+    /// - Returning `None` indicates that the mutation didn't affect structurally the expression subtree. Useful for mutations affecting parameters.
+    fn apply(
+        &self,
+        target: NodeId,
+        node: &ExprNode<G::Tag>,
+        ctx: &mut MutationContext<'_, G>,
+    ) -> Option<NodeId>;
 }
 
 /// Mutation context passed to a mutation
@@ -216,13 +221,14 @@ pub fn apply_mutation<G: Genome + 'static>(
     rng: &mut dyn RngCore,
 ) -> Option<Individual<G>> {
     let root_node: NodeId = source.get_root(parent.root)?;
+    let target_node = source.get_node(target)?;
 
     // Clone parent params so the offspring gets an owned copy
     let mut params = parent.parameters.clone();
 
     let mut ctx = MutationContext::new(source, ops, rng, dest, &mut params);
 
-    let new_subtree_node = mutation.apply(target, &mut ctx);
+    let new_subtree_node = mutation.apply(target, target_node, &mut ctx);
     let changed_structure = new_subtree_node.is_some();
 
     let new_root_node = copy_over_replacing(root_node, target, new_subtree_node, &mut ctx);
@@ -329,6 +335,7 @@ mod tests {
             fn apply(
                 &self,
                 _target: NodeId,
+                _node: &ExprNode<()>,
                 ctx: &mut MutationContext<'_, TestSimpleGenome>,
             ) -> Option<NodeId> {
                 Some(ctx.emit(ExprNode::new_variable(VariableId::from(0u16), ())))
