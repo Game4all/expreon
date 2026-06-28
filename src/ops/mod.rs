@@ -23,11 +23,11 @@ pub trait Operation: 'static {
 /// Metadata about an operation
 pub struct OpMetadata {
     /// Human-redable name for this operation
-    name: &'static str,
+    pub name: &'static str,
     /// String based unique ID for this operation
-    id: &'static str,
+    pub id: &'static str,
     /// Arity of the operation
-    arity: Arity,
+    pub arity: Arity,
 
     /// Pointer to the forward pass implementation of the operation
     forward_pass: fn(&[Scalar]) -> Scalar,

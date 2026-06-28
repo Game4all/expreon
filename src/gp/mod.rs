@@ -89,12 +89,12 @@ impl<G: Genome> Context<G> {
         }
     }
 
-    /// Returns `(source_arena, dest_arena)`. Source is the current live buffer;
+    /// Returns `(source_arena, dest_arena, ops)`. Source is the current live buffer;
     /// dest is the buffer offspring are built into.
-    pub fn buffers(&mut self) -> (&ExprArena<G::Tag>, &mut ExprArena<G::Tag>) {
+    pub fn borrow_parts(&mut self) -> (&ExprArena<G::Tag>, &mut ExprArena<G::Tag>, &OperationTable) {
         match self.current_buffer {
-            CurrentBuffer::A => (&self.arena_a, &mut self.arena_b),
-            CurrentBuffer::B => (&self.arena_b, &mut self.arena_a),
+            CurrentBuffer::A => (&self.arena_a, &mut self.arena_b, &self.operations),
+            CurrentBuffer::B => (&self.arena_b, &mut self.arena_a, &self.operations),
         }
     }
 
