@@ -1,7 +1,7 @@
 pub mod builtin;
 pub mod mutator;
 
-pub use mutator::Mutator;
+pub use mutator::{Mutator, apply_mutation};
 
 use rand::RngCore;
 

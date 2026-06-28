@@ -85,6 +85,45 @@ fn eliminate_dead_params<Tag: Clone>(
     *params = new_params;
 }
 
+/// Applies the provided `mutation` to `target` within `parent`'s tree,
+/// building the resulting offspring into `dest`.
+///
+/// This clones the parent's parameters, applies the mutation at `target`,
+/// rebuilds the tree into `dest`, and runs dead-parameter elimination
+/// if the mutation changed the expression structure.
+/// Returns `None` if `parent` has no root in `source`.
+pub fn apply_mutation<G: Genome + 'static>(
+    mutation: &dyn Mutation<G>,
+    target: NodeId,
+    parent: &Individual<G>,
+    source: &ExprArena<G::Tag>,
+    dest: &mut ExprArena<G::Tag>,
+    ops: &OperationTable,
+    rng: &mut dyn RngCore,
+) -> Option<Individual<G>> {
+    let root_node: NodeId = source.get_root(parent.root)?;
+
+    // Clone parent params so the offspring gets an owned copy
+    let mut params = parent.parameters.clone();
+
+    let mut ctx = MutationContext::new(source, ops, rng, dest, &mut params);
+
+    let new_subtree_node = mutation.apply(target, &mut ctx);
+    let changed_structure = new_subtree_node.is_some();
+
+    let new_root_node = copy_over_replacing(root_node, target, new_subtree_node, &mut ctx);
+    drop(ctx);
+
+    let new_root = dest.add_root(new_root_node);
+
+    // run dead param elimination if mutation changed expression structure
+    if changed_structure {
+        eliminate_dead_params(dest, &mut params, new_root);
+    }
+
+    Some(Individual::new(new_root, params))
+}
+
 /// Weighted, pluggable registry of mutations.
 ///
 /// On each call to `mutate`, one mutation is selected (weighted by its
@@ -123,8 +162,6 @@ impl<G: Genome + 'static> Mutator<G> {
         ops: &OperationTable,
         rng: &mut dyn RngCore,
     ) -> Option<Individual<G>> {
-        let root_node = source.get_root(parent.root)?;
-
         // Collect mutable candidate nodes from the genome of the invidivual.
         let candidates: Vec<NodeId> = G::mutation_targets(parent.root, source);
         if candidates.is_empty() {
@@ -171,25 +208,7 @@ impl<G: Genome + 'static> Mutator<G> {
         // Pick a target uniformly.
         let target = targets[rng.random_range(0..targets.len())];
 
-        // Clone parent params so the offspring gets an owned copy
-        let mut params = parent.parameters.clone();
-
-        let mut ctx = MutationContext::new(source, ops, rng, dest, &mut params);
-
-        let new_subtree_node = mutation.apply(target, &mut ctx);
-        let changed_structure = new_subtree_node.is_some();
-
-        let new_root_node = copy_over_replacing(root_node, target, new_subtree_node, &mut ctx);
-        drop(ctx);
-
-        let new_root = dest.add_root(new_root_node);
-
-        // run dead param elimination if mutation changed expression structure
-        if changed_structure {
-            eliminate_dead_params(dest, &mut params, new_root);
-        }
-
-        Some(Individual::new(new_root, params))
+        apply_mutation(mutation, target, parent, source, dest, ops, rng)
     }
 }
 
@@ -207,7 +226,7 @@ mod tests {
         gp::{
             Individual,
             mutation::{
-                MutationContext, Mutator,
+                Mutation, MutationContext, Mutator, apply_mutation,
                 builtin::{ParamJitter, PointMutation, SubtreeMutation},
             },
             subtree::{GrowSubtreeConfig, TreeGenConfig},
@@ -284,15 +303,21 @@ mod tests {
         let mut dest: ExprArena<()> = ExprArena::new();
         let (root, params) = build_two_param_tree(&mut src);
 
+        // PointMutation acts on an operator node — here the root `add`.
+        let target = src.get_root(root).unwrap();
         let parent = Individual::<TestSimpleGenome>::new(root, params);
         let mut rng = StdRng::seed_from_u64(1);
 
-        let mut mutator: Mutator<TestSimpleGenome> = Mutator::new();
-        mutator.add(1.0, PointMutation);
-
-        let offspring = mutator
-            .mutate(&parent, &src, &mut dest, &ops, &mut rng)
-            .unwrap();
+        let offspring = apply_mutation(
+            &PointMutation,
+            target,
+            &parent,
+            &src,
+            &mut dest,
+            &ops,
+            &mut rng,
+        )
+        .unwrap();
 
         // Same number of nodes.
         let src_count = src.iter_expr_nodes(parent.root).count();
@@ -313,15 +338,26 @@ mod tests {
         let (root, params) = build_two_param_tree(&mut src);
         let original_params = params.clone();
 
+        // ParamJitter acts on a parameter node — pick the first one.
+        let target = src
+            .iter_expr_nodes(root)
+            .find(|(_, n)| matches!(n.kind, NodeKind::Parameter(_)))
+            .map(|(id, _)| id)
+            .unwrap();
+
         let parent = Individual::<TestSimpleGenome>::new(root, params);
         let mut rng = StdRng::seed_from_u64(2);
 
-        let mut mutator: Mutator<TestSimpleGenome> = Mutator::new();
-        mutator.add(1.0, ParamJitter { stddev: 0.1 });
-
-        let offspring = mutator
-            .mutate(&parent, &src, &mut dest, &ops, &mut rng)
-            .unwrap();
+        let offspring = apply_mutation(
+            &ParamJitter { stddev: 0.1 },
+            target,
+            &parent,
+            &src,
+            &mut dest,
+            &ops,
+            &mut rng,
+        )
+        .unwrap();
 
         // Same tree structure (same number of nodes).
         let src_count = src.iter_expr_nodes(parent.root).count();
@@ -351,6 +387,8 @@ mod tests {
         let mut dest: ExprArena<()> = ExprArena::new();
         let (root, params) = build_two_param_tree(&mut src);
 
+        // SubtreeMutation can replace any node — target the root.
+        let target = src.get_root(root).unwrap();
         let parent = Individual::<TestSimpleGenome>::new(root, params);
         let mut rng = StdRng::seed_from_u64(3);
 
@@ -363,12 +401,16 @@ mod tests {
             },
         };
 
-        let mut mutator: Mutator<TestSimpleGenome> = Mutator::new();
-        mutator.add(1.0, SubtreeMutation { grow: cfg });
-
-        let offspring = mutator
-            .mutate(&parent, &src, &mut dest, &ops, &mut rng)
-            .unwrap();
+        let offspring = apply_mutation(
+            &SubtreeMutation { grow: cfg },
+            target,
+            &parent,
+            &src,
+            &mut dest,
+            &ops,
+            &mut rng,
+        )
+        .unwrap();
 
         let root_node = dest.get_root(offspring.root).unwrap();
         let eval_ctx = EvalContext::new(&dest, &ops);
@@ -386,6 +428,79 @@ mod tests {
 
         // Must not panic.
         let _ = eval_ctx.eval_batch(root_node, inputs.view(), params_arr.view());
+    }
+
+    // ---------------------------------------------------------------------------
+    // apply_mutation in isolation — drives a fixed mutation at a chosen target,
+    // exercising the structural-change path (rebuild + dead-param elimination)
+    // and confirming the parent is left untouched.
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn apply_mutation_runs_dead_param_elimination_and_clones_parent() {
+        use crate::gp::builder::NodeBuilder;
+        use crate::types::VariableId;
+
+        // A mutation that swaps the target subtree for variable(0), making any
+        // parameter the target referenced dead.
+        struct ReplaceWithVariable;
+        impl Mutation<TestSimpleGenome> for ReplaceWithVariable {
+            fn applies_to(&self, _kind: NodeKind) -> bool {
+                true
+            }
+            fn apply(
+                &self,
+                _target: NodeId,
+                ctx: &mut MutationContext<'_, TestSimpleGenome>,
+            ) -> Option<NodeId> {
+                Some(ctx.emit(ExprNode::new_variable(VariableId::from(0u16), ())))
+            }
+        }
+
+        let ops = base_ops();
+        let mut src: ExprArena<()> = ExprArena::new();
+        let mut dest: ExprArena<()> = ExprArena::new();
+
+        // add(param(0), param(1)) with params [1.0, 2.0].
+        let (root, params) = build_two_param_tree(&mut src);
+
+        // Target param(1)'s node — replacing it yields add(param(0), variable(0)),
+        // leaving param(1) (value 2.0) dead.
+        let target = src
+            .iter_expr_nodes(root)
+            .find_map(|(id, n)| match n.kind {
+                NodeKind::Parameter(pid) if *pid == 1 => Some(id),
+                _ => None,
+            })
+            .unwrap();
+
+        let parent = Individual::<TestSimpleGenome>::new(root, params);
+        let mut rng = StdRng::seed_from_u64(7);
+
+        let offspring = apply_mutation(
+            &ReplaceWithVariable,
+            target,
+            &parent,
+            &src,
+            &mut dest,
+            &ops,
+            &mut rng,
+        )
+        .unwrap();
+
+        // Dead-param elimination ran: only the surviving param(0) (1.0) remains,
+        // renumbered densely from 0.
+        assert_eq!(offspring.parameters, vec![1.0]);
+        let surviving_pids: Vec<u16> = dest
+            .iter_expr_nodes(offspring.root)
+            .filter_map(|(_, n)| match n.kind {
+                NodeKind::Parameter(pid) => Some(*pid),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(surviving_pids, vec![0]);
+
+        // The parent's parameters are untouched — apply_mutation works on a clone.
+        assert_eq!(parent.parameters, vec![1.0, 2.0]);
     }
 
     #[test]
