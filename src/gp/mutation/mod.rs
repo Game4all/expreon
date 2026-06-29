@@ -96,6 +96,12 @@ impl<'a, G: Genome> MutationContext<'a, G> {
         self.dest.add(ExprNode::new(new_kind, tag))
     }
 
+    /// Borrow the source arena (the parent's tree), for looking up nodes and
+    /// walking subtrees while building the offspring.
+    pub fn source(&self) -> &ExprArena<G::Tag> {
+        self.source
+    }
+
     /// Read the current value of a parameter.
     pub fn get_parameter(&self, id: ParameterId) -> Scalar {
         self.params[*id as usize]
@@ -179,7 +185,7 @@ fn eliminate_dead_params<Tag: Clone>(
     root: RootId,
 ) {
     // Collect node ids first; the walk borrows the arena immutably.
-    let ids: Vec<NodeId> = arena.walk_expr(root).into_iter().flatten().collect();
+    let ids: Vec<NodeId> = arena.walk_root(root).into_iter().flatten().collect();
 
     // First-encounter remap: old ParameterId -> new dense id, building new vec.
     let mut remap: Vec<Option<ParameterId>> = vec![None; params.len()];
@@ -284,8 +290,9 @@ mod tests {
         root: RootId,
     ) -> (Vec<u16>, Vec<Scalar>) {
         super::eliminate_dead_params(arena, params, root);
+        let root_node = arena.get_root(root).unwrap();
         let ids: Vec<u16> = arena
-            .iter_expr_nodes(root)
+            .iter_expr_nodes(root_node)
             .filter_map(|(_, n)| match n.kind {
                 NodeKind::Parameter(pid) => Some(*pid),
                 _ => None,
@@ -310,9 +317,9 @@ mod tests {
 
             let copied = ctx.copy_subtree(root_node);
 
-            let src_ids: Vec<_> = src.iter_expr_nodes(root).map(|(id, _)| id).collect();
-            let dest_root = dest.add_root(copied);
-            let dest_ids: Vec<_> = dest.iter_expr_nodes(dest_root).map(|(id, _)| id).collect();
+            let src_ids: Vec<_> = src.iter_expr_nodes(root_node).map(|(id, _)| id).collect();
+            dest.add_root(copied);
+            let dest_ids: Vec<_> = dest.iter_expr_nodes(copied).map(|(id, _)| id).collect();
             assert_eq!(src_ids.len(), dest_ids.len());
         }
     }
@@ -348,8 +355,9 @@ mod tests {
 
         let (root, params) = build_two_param_tree(&mut src);
 
+        let root_node = src.get_root(root).unwrap();
         let target = src
-            .iter_expr_nodes(root)
+            .iter_expr_nodes(root_node)
             .find_map(|(id, n)| match n.kind {
                 NodeKind::Parameter(pid) if *pid == 1 => Some(id),
                 _ => None,
@@ -371,8 +379,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(offspring.parameters, vec![1.0]);
+        let offspring_root = dest.get_root(offspring.root).unwrap();
         let surviving_pids: Vec<u16> = dest
-            .iter_expr_nodes(offspring.root)
+            .iter_expr_nodes(offspring_root)
             .filter_map(|(_, n)| match n.kind {
                 NodeKind::Parameter(pid) => Some(*pid),
                 _ => None,

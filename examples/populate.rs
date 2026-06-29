@@ -60,9 +60,9 @@ fn main() {
     let eval = EvalContext::new(arena, &ctx.operations);
 
     for (i, ind) in pop.iter().enumerate() {
-        let node_count = arena.iter_expr_nodes(ind.root).count();
-        let param_count = ind.parameters.len();
         let root_node = arena.get_root(ind.root).unwrap();
+        let node_count = arena.iter_expr_nodes(root_node).count();
+        let param_count = ind.parameters.len();
 
         // eval_batch needs at least one parameter column even for param-free trees.
         let mut p = ind.parameters.clone();

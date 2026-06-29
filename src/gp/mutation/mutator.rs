@@ -151,9 +151,8 @@ mod tests {
             let offspring = mutator
                 .mutate(&parent, &src, &mut dest, &ops, &mut rng)
                 .unwrap();
-            dest.iter_expr_nodes(offspring.root)
-                .map(|(id, _)| id)
-                .collect()
+            let root_node = dest.get_root(offspring.root).unwrap();
+            dest.iter_expr_nodes(root_node).map(|(id, _)| id).collect()
         };
 
         assert_eq!(run(99), run(99));

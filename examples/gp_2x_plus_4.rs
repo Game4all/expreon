@@ -19,7 +19,10 @@ use symbolic_rs::{
         Context, Genome, Individual,
         mutation::{
             Mutator,
-            builtin::{ParamJitter, PointMutation, SubtreeMutation},
+            builtin::{
+                HoistMutation, InsertMutation, ParamJitter, PointMutation, SubtreeMutation,
+                TerminalMutation,
+            },
         },
         subtree::{GrowSubtreeConfig, TreeGenConfig, TreeMethod, gen_tree},
     },
@@ -191,7 +194,22 @@ fn main() {
             },
         )
         .add(0.3, PointMutation)
-        .add(0.2, ParamJitter { stddev: 0.5 });
+        .add(0.2, ParamJitter { stddev: 0.5 })
+        .add(0.2, HoistMutation)
+        .add(
+            0.2,
+            InsertMutation {
+                const_range: (-5.0, 5.0),
+                p_binary: 0.5,
+            },
+        )
+        .add(
+            0.2,
+            TerminalMutation {
+                const_range: (-5.0, 5.0),
+                p_variable: 0.5,
+            },
+        );
 
     // Penalized fitness = MSE + DEPTH_PENALTY * depth.
     // Raw MSE is tracked separately for convergence checks and display.
@@ -272,7 +290,7 @@ fn main() {
     let best = &population[best_idx];
     let arena = gp_context.source_arena();
     let root_node = arena.get_root(best.root).unwrap();
-    let n_nodes = arena.iter_expr_nodes(best.root).count();
+    let n_nodes = arena.iter_expr_nodes(root_node).count();
     let depth = tree_depth(best.root, arena);
     let eval = EvalContext::new(arena, &gp_context.operations);
     let raw_mse = mse(best, &eval, inputs.view(), targets.view());

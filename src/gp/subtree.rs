@@ -68,7 +68,10 @@ pub fn gen_subtree<G: Genome, B: NodeBuilder<G>>(
     gen_tree(b, &cfg.tuning, TreeMethod::Grow, depth)
 }
 
-fn emit_terminal<G: Genome, B: NodeBuilder<G>>(b: &mut B, cfg: &TreeGenConfig) -> NodeId {
+pub(crate) fn emit_terminal<G: Genome, B: NodeBuilder<G>>(
+    b: &mut B,
+    cfg: &TreeGenConfig,
+) -> NodeId {
     // 50/50 between a variable and a new constant parameter.
     if G::INPUT_DIM > 0 && b.rng().random::<bool>() {
         let var = b.pick_variable();

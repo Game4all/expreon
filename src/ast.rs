@@ -77,21 +77,25 @@ impl<Tag: Clone> ExprArena<Tag> {
         self.roots.get(usize::from(root_id)).copied()
     }
 
-    /// Returns an iterator that walks the Node IDs of an expression
-    pub fn walk_expr<'a>(&'a self, root_id: RootId) -> Option<ExprNodeIter<'a, Tag>> {
-        let root = self.get_root(root_id)?;
-
-        Some(ExprNodeIter {
+    /// Returns an iterator that walks the Node IDs of the subtree rooted at
+    /// `node` (including `node` itself) in DFS pre-order. An invalid `node`
+    /// yields an empty iterator.
+    pub fn walk_expr(&self, node: NodeId) -> ExprNodeIter<'_, Tag> {
+        ExprNodeIter {
             arena: self,
-            stack: vec![root],
-        })
+            stack: vec![node],
+        }
     }
 
-    /// Returns an interator iterating over the nodes of an expression
-    pub fn iter_expr_nodes(&self, root: RootId) -> impl Iterator<Item = (NodeId, &ExprNode<Tag>)> {
-        self.walk_expr(root)
-            .into_iter()
-            .flatten()
+    /// Returns an iterator that walks the Node IDs of the expression registered
+    /// under `root_id`, or `None` if the root id is invalid.
+    pub fn walk_root(&self, root_id: RootId) -> Option<ExprNodeIter<'_, Tag>> {
+        self.get_root(root_id).map(|node| self.walk_expr(node))
+    }
+
+    /// Returns an iterator over the nodes of the subtree rooted at `node`.
+    pub fn iter_expr_nodes(&self, node: NodeId) -> impl Iterator<Item = (NodeId, &ExprNode<Tag>)> {
+        self.walk_expr(node)
             .map(move |id| (id, self.get_node(id).unwrap()))
     }
 
@@ -187,8 +191,8 @@ mod tests {
         let child = arena.add(ExprNode::new_parameter(ParameterId::from(0), ()));
         let parent = arena.add(ExprNode::new_unary(child, OperationId::from(0), ()));
 
-        let root = arena.add_root(parent);
-        let visited: Vec<NodeId> = arena.walk_expr(root).unwrap().collect();
+        arena.add_root(parent);
+        let visited: Vec<NodeId> = arena.walk_expr(parent).collect();
 
         assert_eq!(visited, vec![parent, child]);
     }
@@ -201,17 +205,17 @@ mod tests {
         let right = arena.add(ExprNode::new_parameter(ParameterId::from(2), ()));
         let root_node = arena.add(ExprNode::new_binary(left, right, OperationId::from(0), ()));
 
-        let root = arena.add_root(root_node);
-        let visited: Vec<_> = arena.walk_expr(root).unwrap().collect();
+        arena.add_root(root_node);
+        let visited: Vec<_> = arena.walk_expr(root_node).collect();
 
         assert_eq!(visited, vec![root_node, left, right]);
     }
 
     #[test]
-    fn test_walk_expr_invalid_root() {
+    fn test_walk_expr_invalid_node() {
         let arena: ExprArena<()> = ExprArena::new();
 
-        assert!(arena.walk_expr(RootId::from(0)).is_none());
+        assert_eq!(arena.walk_expr(NodeId::from(0)).count(), 0);
     }
 
     #[test]
@@ -224,9 +228,9 @@ mod tests {
         let mul = arena.add(ExprNode::new_binary(a, b, OperationId::from(1), ()));
         let add = arena.add(ExprNode::new_binary(mul, c, OperationId::from(2), ()));
 
-        let root = arena.add_root(add);
+        arena.add_root(add);
 
-        let visited: Vec<_> = arena.walk_expr(root).unwrap().collect();
+        let visited: Vec<_> = arena.walk_expr(add).collect();
 
         assert_eq!(visited, vec![add, mul, a, b, c]);
     }
@@ -237,9 +241,9 @@ mod tests {
 
         let p = arena.add(ExprNode::new_parameter(ParameterId::from(123), ()));
 
-        let root = arena.add_root(p);
+        arena.add_root(p);
 
-        let items: Vec<_> = arena.iter_expr_nodes(root).collect();
+        let items: Vec<_> = arena.iter_expr_nodes(p).collect();
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].0, p);

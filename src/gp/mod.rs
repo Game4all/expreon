@@ -25,7 +25,7 @@ pub trait Genome: Clone {
 
     /// Returns a list of potential mutation targets for this individual genome.
     fn mutation_targets(root: RootId, arena: &ExprArena<Self::Tag>) -> Vec<NodeId> {
-        arena.walk_expr(root).unwrap().collect()
+        arena.walk_root(root).into_iter().flatten().collect()
     }
 
     /// Gets a tag to attach to a new or structurally-changed expression node.
