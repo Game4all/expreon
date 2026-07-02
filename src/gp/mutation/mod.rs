@@ -69,31 +69,11 @@ impl<'a, G: Genome> MutationContext<'a, G> {
 
     /// Verbatim deep copy of a source subtree, preserving each node's tag.
     pub fn copy_subtree(&mut self, src: NodeId) -> NodeId {
-        // Bind the &ExprArena as a plain reference so we can re-borrow `self` mutably.
-        let arena: &ExprArena<G::Tag> = self.source;
-        let node = arena
-            .get_node(src)
-            .expect("invalid source node in copy_subtree");
-        let kind = node.kind;
-        let tag = node.tag.clone();
-        let new_kind = match kind {
-            NodeKind::Unary { value, op } => {
-                let v = self.copy_subtree(value);
-                NodeKind::Unary { value: v, op }
-            }
-            NodeKind::Binary { left, right, op } => {
-                let l = self.copy_subtree(left);
-                let r = self.copy_subtree(right);
-                NodeKind::Binary {
-                    left: l,
-                    right: r,
-                    op,
-                }
-            }
-            leaf => leaf,
-        };
-
-        self.dest.add(ExprNode::new(new_kind, tag))
+        // Bind the shared ref before the mutable reborrow of `dest`.
+        let source: &ExprArena<G::Tag> = self.source;
+        source
+            .copy_over(src, self.dest)
+            .expect("invalid source node in copy_subtree")
     }
 
     /// Borrow the source arena (the parent's tree), for looking up nodes and
@@ -143,7 +123,13 @@ fn copy_over_replacing<G: Genome + 'static>(
     if src_node == target {
         // A passthrough mutation yields `None`; copy the target subtree verbatim
         // (preserving tags) in that case.
-        return replacement.unwrap_or_else(|| ctx.copy_subtree(target));
+        if let Some(node) = replacement {
+            return node;
+        }
+        let source: &ExprArena<G::Tag> = ctx.source;
+        return source
+            .copy_over(target, ctx.dest)
+            .expect("invalid target node in copy_over_replacing");
     }
 
     // Bind arena as a copy of the shared ref before borrowing `ctx` mutably below.
