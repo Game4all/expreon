@@ -1,0 +1,8 @@
+[package]
+name = "expreon_eval"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+expreon_ast = { path = "../expreon_ast" }
+ndarray = "0.17"

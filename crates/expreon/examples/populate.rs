@@ -4,7 +4,7 @@
 use ndarray::Array2;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
-use symbolic_rs::{
+use expreon::{
     ast::NodeKind,
     eval::EvalContext,
     gp::subtree::{TreeGenConfig, TreeMethod, gen_tree},
@@ -44,7 +44,7 @@ fn main() {
     // random tree into it, then register the root and collect the individual.
     let mut individuals = Vec::with_capacity(pop_size);
     for _ in 0..pop_size {
-        let mut b: symbolic_rs::gp::IndividualBuilder<'_, SimpleGenome> = ctx.builder(&mut rng);
+        let mut b: expreon::gp::IndividualBuilder<'_, SimpleGenome> = ctx.builder(&mut rng);
         let root_node = gen_tree::<SimpleGenome, _>(&mut b, &tuning, TreeMethod::Grow, max_depth);
         let (ind, _) = b.finish(root_node);
         individuals.push(ind);

@@ -10,9 +10,9 @@
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 use rand::rngs::StdRng;
 use rand::{Rng, RngCore, SeedableRng};
-use symbolic_rs::ops::Operation;
-use symbolic_rs::ops::builtin::{Add, Div, MathBaseOps, Mul, Sub};
-use symbolic_rs::{
+use expreon::ops::Operation;
+use expreon::ops::builtin::{Add, Div, MathBaseOps, Mul, Sub};
+use expreon::{
     ast::{ExprArena, NodeKind},
     eval::EvalContext,
     gp::{

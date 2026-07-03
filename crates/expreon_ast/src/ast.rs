@@ -161,8 +161,6 @@ impl<'a, Tag: Clone> Iterator for ExprNodeIter<'a, Tag> {
     }
 }
 
-pub mod utils {}
-
 impl<Tag: Clone> ExprNode<Tag> {
     pub const fn new(kind: NodeKind, tag: Tag) -> Self {
         Self { kind, tag }
