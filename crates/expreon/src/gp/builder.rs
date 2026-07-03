@@ -1,10 +1,7 @@
 use rand::{Rng, RngCore};
 
-use crate::{
-    ast::ExprNode,
-    ops::OperationTable,
-    types::{NodeId, OperationId, ParameterId, Scalar, VariableId},
-};
+use expreon_ast::{ExprNode, NodeId, OperationId, ParameterId, Scalar, VariableId};
+use expreon_eval::ops::OperationTable;
 
 use super::Genome;
 

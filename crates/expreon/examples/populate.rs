@@ -4,14 +4,10 @@
 use ndarray::Array2;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
-use expreon::{
-    ast::NodeKind,
-    eval::EvalContext,
-    gp::subtree::{TreeGenConfig, TreeMethod, gen_tree},
-    gp::{Context, Genome, Population},
-    ops::OperationTableBuilder,
-    ops::builtin::MathBaseOps,
-};
+use expreon::gp::subtree::{TreeGenConfig, TreeMethod, gen_tree};
+use expreon::gp::{Context, Genome, Population};
+use expreon::ops::builtin::MathBaseOps;
+use expreon::prelude::*;
 
 /// Minimal genome: no tags, all nodes are mutable.
 #[derive(Clone)]

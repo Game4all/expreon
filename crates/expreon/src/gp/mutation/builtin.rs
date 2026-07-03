@@ -1,14 +1,12 @@
 use rand::Rng;
 use rand_distr::{Distribution, Normal};
 
-use crate::{
-    ast::{ExprNode, NodeKind},
-    gp::{
-        Genome,
-        builder::NodeBuilder,
-        subtree::{GrowSubtreeConfig, TreeGenConfig, emit_terminal, gen_subtree},
-    },
-    types::{NodeId, Scalar},
+use expreon_ast::{ExprNode, NodeId, NodeKind, Scalar};
+
+use crate::gp::{
+    Genome,
+    builder::NodeBuilder,
+    subtree::{GrowSubtreeConfig, TreeGenConfig, emit_terminal, gen_subtree},
 };
 
 use super::{Mutation, MutationContext};
@@ -294,25 +292,23 @@ mod tests {
     use rand::SeedableRng;
     use rand::rngs::StdRng;
 
-    use crate::{
-        ast::{ExprArena, ExprNode, NodeKind},
-        gp::{
-            Individual,
-            mutation::{
-                apply_mutation,
-                builtin::{
-                    HoistMutation, InsertMutation, ParamJitter, PointMutation, SubtreeMutation,
-                    TerminalMutation,
-                },
+    use expreon_ast::{ExprArena, ExprNode, NodeKind, OperationId, ParameterId, RootId, Scalar};
+    use expreon_eval::ops::{OperationTable, OperationTableBuilder, builtin::MathBaseOps};
+
+    use crate::gp::{
+        Individual,
+        mutation::{
+            apply_mutation,
+            builtin::{
+                HoistMutation, InsertMutation, ParamJitter, PointMutation, SubtreeMutation,
+                TerminalMutation,
             },
-            subtree::{GrowSubtreeConfig, TreeGenConfig},
-            test_genome::TestSimpleGenome,
         },
-        ops::{OperationTableBuilder, builtin::MathBaseOps},
-        types::{OperationId, ParameterId, RootId, Scalar},
+        subtree::{GrowSubtreeConfig, TreeGenConfig},
+        test_genome::TestSimpleGenome,
     };
 
-    fn base_ops() -> crate::ops::OperationTable {
+    fn base_ops() -> OperationTable {
         let mut b = OperationTableBuilder::new();
         b.register_set::<MathBaseOps>();
         b.build()
@@ -412,7 +408,7 @@ mod tests {
     // ---------------------------------------------------------------------------
     #[test]
     fn subtree_mutation_produces_valid_tree() {
-        use crate::eval::EvalContext;
+        use expreon_eval::eval::EvalContext;
         use ndarray::array;
 
         let ops = base_ops();
@@ -463,10 +459,10 @@ mod tests {
     /// Evaluate an offspring once to confirm it is structurally valid (no panic).
     fn eval_ok(
         dest: &ExprArena<()>,
-        ops: &crate::ops::OperationTable,
+        ops: &OperationTable,
         offspring: &Individual<TestSimpleGenome>,
     ) {
-        use crate::eval::EvalContext;
+        use expreon_eval::eval::EvalContext;
         use ndarray::array;
 
         let root_node = dest.get_root(offspring.root).unwrap();

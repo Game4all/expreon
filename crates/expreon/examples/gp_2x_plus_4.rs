@@ -10,25 +10,19 @@
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 use rand::rngs::StdRng;
 use rand::{Rng, RngCore, SeedableRng};
-use expreon::ops::Operation;
-use expreon::ops::builtin::{Add, Div, MathBaseOps, Mul, Sub};
-use expreon::{
-    ast::{ExprArena, NodeKind},
-    eval::EvalContext,
-    gp::{
-        Context, Genome, Individual,
-        mutation::{
-            Mutator,
-            builtin::{
-                HoistMutation, InsertMutation, ParamJitter, PointMutation, SubtreeMutation,
-                TerminalMutation,
-            },
+use expreon::gp::{
+    Context, Genome, Individual,
+    mutation::{
+        Mutator,
+        builtin::{
+            HoistMutation, InsertMutation, ParamJitter, PointMutation, SubtreeMutation,
+            TerminalMutation,
         },
-        subtree::{GrowSubtreeConfig, TreeGenConfig, TreeMethod, gen_tree},
     },
-    ops::{OperationTable, OperationTableBuilder},
-    types::{NodeId, RootId, Scalar},
+    subtree::{GrowSubtreeConfig, TreeGenConfig, TreeMethod, gen_tree},
 };
+use expreon::ops::builtin::{Add, Div, MathBaseOps, Mul, Sub};
+use expreon::prelude::*;
 
 /// A simple genome with 2D inputs
 #[derive(Clone)]

@@ -2,12 +2,10 @@ use std::marker::PhantomData;
 
 use rand::RngCore;
 
-use crate::{
-    ast::{ExprArena, ExprNode, NodeKind},
-    gp::builder::NodeBuilder,
-    ops::OperationTable,
-    types::{NodeId, ParameterId, RootId, Scalar},
-};
+use expreon_ast::{ExprArena, ExprNode, NodeId, NodeKind, ParameterId, RootId, Scalar};
+use expreon_eval::ops::OperationTable;
+
+use crate::gp::builder::NodeBuilder;
 
 pub mod builder;
 pub mod mutation;

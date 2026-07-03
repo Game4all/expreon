@@ -1,9 +1,6 @@
 use rand::Rng;
 
-use crate::{
-    ast::{ExprNode, NodeKind},
-    types::{NodeId, Scalar},
-};
+use expreon_ast::{ExprNode, NodeId, NodeKind, Scalar};
 
 use super::{Genome, builder::NodeBuilder};
 
@@ -122,18 +119,16 @@ mod tests {
     use rand::SeedableRng;
     use rand::rngs::StdRng;
 
-    use crate::{
-        ast::ExprArena,
-        gp::{
-            mutation::MutationContext,
-            subtree::{GrowSubtreeConfig, TreeGenConfig, gen_subtree},
-            test_genome::TestSimpleGenome,
-        },
-        ops::{OperationTableBuilder, builtin::MathBaseOps},
-        types::Scalar,
+    use expreon_ast::{ExprArena, Scalar};
+    use expreon_eval::ops::{OperationTable, OperationTableBuilder, builtin::MathBaseOps};
+
+    use crate::gp::{
+        mutation::MutationContext,
+        subtree::{GrowSubtreeConfig, TreeGenConfig, gen_subtree},
+        test_genome::TestSimpleGenome,
     };
 
-    fn make_ops() -> crate::ops::OperationTable {
+    fn make_ops() -> OperationTable {
         let mut b = OperationTableBuilder::new();
         b.register_set::<MathBaseOps>();
         b.build()

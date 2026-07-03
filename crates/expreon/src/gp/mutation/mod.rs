@@ -6,12 +6,8 @@ pub use mutator::Mutator;
 use rand::RngCore;
 
 use crate::gp::Individual;
-use crate::types::{RootId, Scalar};
-use crate::{
-    ast::{ExprArena, ExprNode, NodeKind},
-    ops::OperationTable,
-    types::{NodeId, ParameterId},
-};
+use expreon_ast::{ExprArena, ExprNode, NodeId, NodeKind, ParameterId, RootId, Scalar};
+use expreon_eval::ops::OperationTable;
 
 use super::Genome;
 use super::builder::NodeBuilder;
@@ -245,18 +241,16 @@ mod tests {
     use rand::SeedableRng;
     use rand::rngs::StdRng;
 
-    use crate::{
-        ast::{ExprArena, ExprNode, NodeKind},
-        gp::{
-            Individual,
-            mutation::{Mutation, MutationContext, apply_mutation},
-            test_genome::TestSimpleGenome,
-        },
-        ops::{OperationTableBuilder, builtin::MathBaseOps},
-        types::{NodeId, OperationId, ParameterId, RootId, Scalar},
+    use expreon_ast::{ExprArena, ExprNode, NodeId, NodeKind, OperationId, ParameterId, RootId, Scalar};
+    use expreon_eval::ops::{OperationTable, OperationTableBuilder, builtin::MathBaseOps};
+
+    use crate::gp::{
+        Individual,
+        mutation::{Mutation, MutationContext, apply_mutation},
+        test_genome::TestSimpleGenome,
     };
 
-    fn base_ops() -> crate::ops::OperationTable {
+    fn base_ops() -> OperationTable {
         let mut b = OperationTableBuilder::new();
         b.register_set::<MathBaseOps>();
         b.build()
@@ -318,7 +312,7 @@ mod tests {
     #[test]
     fn apply_mutation_runs_dead_param_elimination_and_clones_parent() {
         use crate::gp::builder::NodeBuilder;
-        use crate::types::VariableId;
+        use expreon_ast::VariableId;
 
         struct ReplaceWithVariable;
         impl Mutation<TestSimpleGenome> for ReplaceWithVariable {
@@ -394,7 +388,7 @@ mod tests {
 
     #[test]
     fn dead_params_trailing_param_eliminated() {
-        use crate::types::VariableId;
+        use expreon_ast::VariableId;
         let mut arena: ExprArena<()> = ExprArena::new();
         let p0 = arena.add(ExprNode::new_parameter(ParameterId::from(0u16), ()));
         let v0 = arena.add(ExprNode::new_variable(VariableId::from(0u16), ()));
@@ -409,7 +403,7 @@ mod tests {
 
     #[test]
     fn dead_params_leading_param_removed() {
-        use crate::types::VariableId;
+        use expreon_ast::VariableId;
         let mut arena: ExprArena<()> = ExprArena::new();
         let p1 = arena.add(ExprNode::new_parameter(ParameterId::from(1u16), ()));
         let v0 = arena.add(ExprNode::new_variable(VariableId::from(0u16), ()));
@@ -438,7 +432,7 @@ mod tests {
 
     #[test]
     fn dead_params_all_dead_clears_params() {
-        use crate::types::VariableId;
+        use expreon_ast::VariableId;
         let mut arena: ExprArena<()> = ExprArena::new();
         let v = arena.add(ExprNode::new_variable(VariableId::from(0u16), ()));
         let root = arena.add_root(v);
