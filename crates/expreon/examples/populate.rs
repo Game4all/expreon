@@ -53,7 +53,7 @@ fn main() {
     let inputs = Array2::from_shape_vec((1, 2), vec![0.5_f32, 1.0_f32]).unwrap();
 
     let arena = ctx.source_arena();
-    let eval = EvalContext::new(arena, &ctx.operations);
+    let eval = ExprEvalContext::new(arena, &ctx.operations);
 
     for (i, ind) in pop.iter().enumerate() {
         let root_node = arena.get_root(ind.root).unwrap();

@@ -12,7 +12,7 @@ pub mod prelude {
         Scalar, VariableId,
     };
     pub use expreon_eval::{
-        eval::EvalContext,
+        eval::ExprEvalContext,
         ops::{Arity, Operation, OperationSet, OperationTable, OperationTableBuilder},
     };
 }

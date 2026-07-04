@@ -57,7 +57,7 @@ fn tournament(fitness: &[f32], k: usize, rng: &mut dyn RngCore) -> usize {
 /// MSE of `ind` on `inputs` / `targets`.
 fn mse(
     ind: &Individual<Scalar2DGenome>,
-    eval: &EvalContext<'_, '_, ()>,
+    eval: &ExprEvalContext<'_, '_, ()>,
     inputs: ArrayView2<Scalar>,
     targets: ArrayView1<Scalar>,
 ) -> f32 {
@@ -210,7 +210,7 @@ fn main() {
     let compute_fitness =
         |pop: &[Individual<Scalar2DGenome>], ctx: &Context<Scalar2DGenome>| -> Vec<f32> {
             let arena = ctx.source_arena();
-            let eval = EvalContext::new(arena, &ctx.operations);
+            let eval = ExprEvalContext::new(arena, &ctx.operations);
             pop.iter()
                 .map(|ind| {
                     let raw = mse(ind, &eval, inputs.view(), targets.view());
@@ -241,7 +241,7 @@ fn main() {
         // Compute raw MSE and depth only for the best individual (cheap).
         let (raw_mse, best_depth) = {
             let arena = gp_context.source_arena();
-            let eval = EvalContext::new(arena, &gp_context.operations);
+            let eval = ExprEvalContext::new(arena, &gp_context.operations);
             let ind = &population[best_idx];
             (
                 mse(ind, &eval, inputs.view(), targets.view()),
@@ -286,7 +286,7 @@ fn main() {
     let root_node = arena.get_root(best.root).unwrap();
     let n_nodes = arena.iter_expr_nodes(root_node).count();
     let depth = tree_depth(best.root, arena);
-    let eval = EvalContext::new(arena, &gp_context.operations);
+    let eval = ExprEvalContext::new(arena, &gp_context.operations);
     let raw_mse = mse(best, &eval, inputs.view(), targets.view());
     println!(
         "\nBest individual: MSE={raw_mse:.4e}  fitness={:.4e}  depth={depth}  nodes={n_nodes}  params={:.4?}",

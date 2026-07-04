@@ -408,7 +408,7 @@ mod tests {
     // ---------------------------------------------------------------------------
     #[test]
     fn subtree_mutation_produces_valid_tree() {
-        use expreon_eval::eval::EvalContext;
+        use expreon_eval::eval::ExprEvalContext;
         use ndarray::array;
 
         let ops = base_ops();
@@ -440,7 +440,7 @@ mod tests {
         .unwrap();
 
         let root_node = dest.get_root(offspring.root).unwrap();
-        let eval_ctx = EvalContext::new(&dest, &ops);
+        let eval_ctx = ExprEvalContext::new(&dest, &ops);
 
         let inputs = array![[0.5f32, 1.0f32]];
         let n_params = offspring.parameters.len();
@@ -462,11 +462,11 @@ mod tests {
         ops: &OperationTable,
         offspring: &Individual<TestSimpleGenome>,
     ) {
-        use expreon_eval::eval::EvalContext;
+        use expreon_eval::eval::ExprEvalContext;
         use ndarray::array;
 
         let root_node = dest.get_root(offspring.root).unwrap();
-        let eval_ctx = EvalContext::new(dest, ops);
+        let eval_ctx = ExprEvalContext::new(dest, ops);
         let inputs = array![[0.5f32, 1.0f32]];
         let n_params = offspring.parameters.len();
         let params_arr = ndarray::Array2::from_shape_vec((1, n_params.max(1)), {
