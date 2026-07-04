@@ -495,9 +495,16 @@ mod tests {
         let parent = Individual::<TestSimpleGenome>::new(root, params);
         let mut rng = StdRng::seed_from_u64(5);
 
-        let offspring =
-            apply_mutation(&HoistMutation, target, &parent, &src, &mut dest, &ops, &mut rng)
-                .unwrap();
+        let offspring = apply_mutation(
+            &HoistMutation,
+            target,
+            &parent,
+            &src,
+            &mut dest,
+            &ops,
+            &mut rng,
+        )
+        .unwrap();
 
         let parent_root = src.get_root(parent.root).unwrap();
         let offspring_root = dest.get_root(offspring.root).unwrap();
@@ -520,12 +527,21 @@ mod tests {
             let target = src.get_root(root).unwrap();
             let parent = Individual::<TestSimpleGenome>::new(root, params);
             let mut rng = StdRng::seed_from_u64(seed);
-            let off =
-                apply_mutation(&HoistMutation, target, &parent, &src, &mut dest, &ops, &mut rng)
-                    .unwrap();
+            let off = apply_mutation(
+                &HoistMutation,
+                target,
+                &parent,
+                &src,
+                &mut dest,
+                &ops,
+                &mut rng,
+            )
+            .unwrap();
             let off_root = dest.get_root(off.root).unwrap();
-            let kinds: Vec<NodeKind> =
-                dest.iter_expr_nodes(off_root).map(|(_, n)| n.kind).collect();
+            let kinds: Vec<NodeKind> = dest
+                .iter_expr_nodes(off_root)
+                .map(|(_, n)| n.kind)
+                .collect();
             (kinds, off.parameters)
         };
         assert_eq!(run(5), run(5));

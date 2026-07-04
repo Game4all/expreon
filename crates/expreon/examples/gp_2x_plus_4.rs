@@ -1,17 +1,18 @@
 //! 2-D symbolic-regression GP loop that rediscovers `2x*x + 4y + 3`.
 //!
-//! Uses tournament selection and three built-in mutations (subtree replacement,
-//! point (operator swap), and parameter jitter). Training data is 20 noise-free
-//! samples over x ∈ [-5, 5], y ∈ [-4, 4].
+//! Uses tournament selection with elitism and six built-in mutations.
+//! Individuals carry their own fitness and live in the [`Context`]'s two
+//! generations (`current` / `next`); selection and breeding pass around plain
+//! `&Individual` references. Training data is 20 noise-free samples over
+//! x ∈ [-5, 5], y ∈ [-4, 4].
 //!
 //! Run with:
-//!   cargo run --example gp_2x_plus_4
+//!   cargo run --release --example gp_2x_plus_4
 
-use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
-use rand::rngs::StdRng;
-use rand::{Rng, RngCore, SeedableRng};
+use std::cmp::Ordering;
+
 use expreon::gp::{
-    Context, Genome, Individual,
+    Context, GenerationBreeder, Genome, Individual, Population,
     mutation::{
         Mutator,
         builtin::{
@@ -23,6 +24,9 @@ use expreon::gp::{
 };
 use expreon::ops::builtin::{Add, Div, MathBaseOps, Mul, Sub};
 use expreon::prelude::*;
+use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
+use rand::rngs::StdRng;
+use rand::{Rng, RngCore, SeedableRng};
 
 /// A simple genome with 2D inputs
 #[derive(Clone)]
@@ -41,17 +45,33 @@ fn build_op_table() -> OperationTable {
     b.build()
 }
 
-/// k-tournament: returns the index of the lowest-fitness candidate among k draws.
-fn tournament(fitness: &[f32], k: usize, rng: &mut dyn RngCore) -> usize {
-    let n = fitness.len();
-    let mut best = rng.random_range(0..n);
+/// k-tournament: returns the lowest-fitness candidate among k draws.
+/// Unscored individuals are treated as worst.
+fn tournament<'p>(
+    pop: &'p Population<Scalar2DGenome>,
+    k: usize,
+    rng: &mut dyn RngCore,
+) -> &'p Individual<Scalar2DGenome> {
+    let n = pop.len();
+    let fit = |ind: &Individual<Scalar2DGenome>| ind.fitness.unwrap_or(f32::MAX);
+    let mut best = &pop[rng.random_range(0..n)];
     for _ in 1..k {
-        let idx = rng.random_range(0..n);
-        if fitness[idx] < fitness[best] {
-            best = idx;
+        let candidate = &pop[rng.random_range(0..n)];
+        if fit(candidate) < fit(best) {
+            best = candidate;
         }
     }
     best
+}
+
+/// Returns the lowest-fitness individual in `pop`.
+fn best_of(pop: &Population<Scalar2DGenome>) -> &Individual<Scalar2DGenome> {
+    pop.iter()
+        .min_by(|a, b| {
+            let (fa, fb) = (a.fitness.unwrap_or(f32::MAX), b.fitness.unwrap_or(f32::MAX));
+            fa.partial_cmp(&fb).unwrap_or(Ordering::Equal)
+        })
+        .unwrap()
 }
 
 /// MSE of `ind` on `inputs` / `targets`.
@@ -97,6 +117,33 @@ fn tree_depth(root: RootId, arena: &ExprArena<()>) -> usize {
         }
     }
     arena.get_root(root).map_or(0, |n| depth_of(n, arena))
+}
+
+const POP_SIZE: usize = 10_000;
+const GEN_COUNT: usize = 250;
+const K: usize = 50; // tournament size
+const EPSILON: f32 = 1e-12;
+const DEPTH_PENALTY: f32 = 0.01; // added to fitness per unit of tree depth
+
+// Score every unscored individual in the current generation with penalized
+// fitness = MSE + DEPTH_PENALTY * depth. Reading the arena while writing the
+// population works through direct disjoint field borrows of the context.
+// Individuals carried over by elitism keep their fitness and are skipped.
+fn evaluate_population(
+    ctx: &mut Context<Scalar2DGenome>,
+    inputs: &ArrayView2<Scalar>,
+    targets: &ArrayView1<Scalar>,
+) {
+    let arena = &ctx.current.arena;
+    let eval = ExprEvalContext::new(arena, &ctx.operations);
+    ctx.current.population.score_unscored(|ind| {
+        let raw = mse(ind, &eval, *inputs, targets.view());
+        if raw == f32::MAX {
+            f32::MAX
+        } else {
+            raw + DEPTH_PENALTY * tree_depth(ind.root, arena) as f32
+        }
+    });
 }
 
 /// Format the AST tree expression for display
@@ -149,12 +196,6 @@ fn main() {
     let inputs = Array2::from_shape_fn((N, 2), |(i, j)| if j == 0 { xs[i] } else { ys[i] });
     let targets = Array1::from_vec(targets);
 
-    const POP: usize = 10_000;
-    const GENS: usize = 100;
-    const K: usize = 10; // tournament size
-    const EPSILON: f32 = 1e-12;
-    const DEPTH_PENALTY: f32 = 0.01; // added to fitness per unit of tree depth
-
     let tree_cfg = TreeGenConfig {
         p_terminal: 0.3,
         const_range: (-5.0, 5.0),
@@ -162,16 +203,6 @@ fn main() {
 
     let mut gp_context: Context<Scalar2DGenome> = Context::new(build_op_table());
     let mut rng = StdRng::seed_from_u64(42);
-
-    // Initial population in the source arena.
-    let mut population: Vec<Individual<Scalar2DGenome>> = (0..POP)
-        .map(|_| {
-            let mut b = gp_context.builder(&mut rng);
-            let root = gen_tree::<Scalar2DGenome, _>(&mut b, &tree_cfg, TreeMethod::Grow, 4);
-            let (ind, _) = b.finish(root);
-            ind
-        })
-        .collect();
 
     let mut mutator: Mutator<Scalar2DGenome> = Mutator::new();
     mutator
@@ -205,47 +236,30 @@ fn main() {
             },
         );
 
-    // Penalized fitness = MSE + DEPTH_PENALTY * depth.
-    // Raw MSE is tracked separately for convergence checks and display.
-    let compute_fitness =
-        |pop: &[Individual<Scalar2DGenome>], ctx: &Context<Scalar2DGenome>| -> Vec<f32> {
-            let arena = ctx.source_arena();
-            let eval = ExprEvalContext::new(arena, &ctx.operations);
-            pop.iter()
-                .map(|ind| {
-                    let raw = mse(ind, &eval, inputs.view(), targets.view());
-                    if raw == f32::MAX {
-                        return f32::MAX;
-                    }
-                    raw + DEPTH_PENALTY * tree_depth(ind.root, arena) as f32
-                })
-                .collect()
-        };
-
-    let mut fitness = compute_fitness(&population, &gp_context);
-    let best_of = |f: &[f32]| {
-        f.iter()
-            .enumerate()
-            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(i, _)| i)
-            .unwrap()
-    };
+    // Initial population in the current generation (`finish` inserts).
+    for _ in 0..POP_SIZE {
+        let mut b = gp_context.builder(&mut rng);
+        let root = gen_tree::<Scalar2DGenome, _>(&mut b, &tree_cfg, TreeMethod::Grow, 4);
+        b.finish(root);
+    }
 
     println!("Symbolic regression — target: 2x² + 4y + 3 (2-D input)");
-    println!("pop={POP}  gens={GENS}  tournament k={K}\n");
+    println!("pop={POP_SIZE}  gens={GEN_COUNT}  tournament k={K}\n");
 
-    for generation in 0..GENS {
-        let best_idx = best_of(&fitness);
-        let best_fitness = fitness[best_idx];
+    for generation in 0..GEN_COUNT {
+        evaluate_population(&mut gp_context, &inputs.view(), &targets.view());
+
+        // lets find the best individual of current population
+        let best = best_of(&gp_context.current.population);
+        let best_fitness = best.fitness.unwrap_or(f32::MAX);
 
         // Compute raw MSE and depth only for the best individual (cheap).
         let (raw_mse, best_depth) = {
-            let arena = gp_context.source_arena();
+            let arena = &gp_context.current.arena;
             let eval = ExprEvalContext::new(arena, &gp_context.operations);
-            let ind = &population[best_idx];
             (
-                mse(ind, &eval, inputs.view(), targets.view()),
-                tree_depth(ind.root, arena),
+                mse(best, &eval, inputs.view(), targets.view()),
+                tree_depth(best.root, arena),
             )
         };
 
@@ -261,36 +275,41 @@ fn main() {
             break;
         }
 
-        // Build next generation into the dest arena, then swap.
-        let mut next: Vec<Individual<Scalar2DGenome>> = Vec::with_capacity(POP);
+        // Build the next generation, then advance. `Breeding::new` takes the
+        // context fields directly so the outstanding `best` reference into
+        // `current` stays valid while `next` is borrowed mutably.
         {
-            let (source, dest, ops) = gp_context.borrow_parts();
-            for _ in 0..POP {
-                let parent = &population[tournament(&fitness, K, &mut rng)];
-                let child = mutator
-                    .mutate(parent, source, dest, ops, &mut rng)
-                    .expect("mutate returned None — no applicable mutations");
-                next.push(child);
+            let mut breeding = GenerationBreeder::new(
+                &gp_context.current,
+                &mut gp_context.next,
+                &gp_context.operations,
+            );
+            // Elitism: carry the best individual over unchanged (keeps its fitness).
+            breeding.copy_individual_over(best);
+            for _ in 1..POP_SIZE {
+                let parent = tournament(&breeding.source.population, K, &mut rng);
+                breeding.breed(parent, &mutator, &mut rng);
             }
-        } // buffers dropped here, releasing the mutable borrow on gp_context
+        }
 
-        gp_context.swap();
-        population = next;
-        fitness = compute_fitness(&population, &gp_context);
+        gp_context.advance();
     }
 
-    let best_idx = best_of(&fitness);
+    // The last generation produced by the loop is unscored after the final
+    // advance; score it before reporting the overall best.
+    evaluate_population(&mut gp_context, &inputs.view(), &targets.view());
+    let best = best_of(&gp_context.current.population);
+    let best_fitness = best.fitness.unwrap_or(f32::MAX);
 
-    let best = &population[best_idx];
-    let arena = gp_context.source_arena();
+    let arena = &gp_context.current.arena;
     let root_node = arena.get_root(best.root).unwrap();
     let n_nodes = arena.iter_expr_nodes(root_node).count();
     let depth = tree_depth(best.root, arena);
     let eval = ExprEvalContext::new(arena, &gp_context.operations);
     let raw_mse = mse(best, &eval, inputs.view(), targets.view());
     println!(
-        "\nBest individual: MSE={raw_mse:.4e}  fitness={:.4e}  depth={depth}  nodes={n_nodes}  params={:.4?}",
-        fitness[best_idx], best.parameters
+        "\nBest individual: MSE={raw_mse:.4e}  fitness={best_fitness:.4e}  depth={depth}  nodes={n_nodes}  params={:.4?}",
+        best.parameters
     );
     println!(
         "Expression: {}",

@@ -7,9 +7,14 @@ use expreon_eval::ops::OperationTable;
 
 use crate::gp::builder::NodeBuilder;
 
+pub mod breeding;
 pub mod builder;
 pub mod mutation;
+pub mod population;
 pub mod subtree;
+
+pub use breeding::GenerationBreeder;
+pub use population::{Fitness, Population};
 
 /// Base trait for a genome.
 ///
@@ -31,10 +36,12 @@ pub trait Genome: Clone {
 }
 
 /// A single individual in the population.
-/// Holds a reference to its root expression node and its parameters
+/// Holds a reference to its root expression node, its parameters, and its
+/// fitness (`None` until scored).
 pub struct Individual<G: Genome> {
     pub root: RootId,
     pub parameters: Vec<Scalar>,
+    pub fitness: Option<Fitness>,
     _ctx: PhantomData<G>,
 }
 
@@ -43,35 +50,68 @@ impl<G: Genome> Individual<G> {
         Self {
             root,
             parameters,
+            fitness: None,
             _ctx: PhantomData,
         }
     }
 }
 
-/// A collection of individuals making up a generation.
-pub struct Population<G: Genome> {
-    individuals: Vec<Individual<G>>,
+/// One generation: an expression arena together with the population of
+/// individuals whose roots live in it. An individual's `RootId` is only
+/// meaningful paired with its generation's arena.
+pub struct Generation<G: Genome> {
+    pub arena: ExprArena<G::Tag>,
+    pub population: Population<G>,
 }
 
-enum CurrentBuffer {
-    A,
-    B,
+impl<G: Genome> Generation<G> {
+    /// An empty generation.
+    pub const fn new() -> Self {
+        Self {
+            arena: ExprArena::new(),
+            population: Population::new(),
+        }
+    }
+
+    /// Removes all expressions and individuals, resetting the buffer.
+    pub fn clear(&mut self) {
+        self.arena.clear();
+        self.population.clear();
+    }
+}
+
+impl<G: Genome> Default for Generation<G> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Global context for genetic programming.
-/// Holds operation table and ping-pong expression arenas.
+///
+/// Holds the operation table and two generations: `current` is the live one
+/// (individuals are built, scored and selected here) and `next` is the one
+/// being bred into via [`GenerationBreeder`]. [`Context::advance`] promotes `next` to
+/// `current`.
+///
+/// The fields are public on purpose: accessing them directly
+/// (`&ctx.current.arena`, `&mut ctx.current.population`, ...) lets the borrow
+/// checker split the borrows — e.g. reading the arena while writing fitness
+/// into the population.
 pub struct Context<G: Genome> {
-    arena_a: ExprArena<G::Tag>,
-    arena_b: ExprArena<G::Tag>,
-    current_buffer: CurrentBuffer,
+    pub current: Generation<G>,
+    pub next: Generation<G>,
     pub operations: OperationTable,
 }
 
 /// A `NodeBuilder` returned by [`Context::builder`] for constructing a single
 /// individual by hand. Call [`IndividualBuilder::finish`] to register the root
-/// and obtain the [`Individual`].
+/// and insert the individual into the target generation, obtaining a mutable
+/// reference to it. The individual is built into, and inserted into, the
+/// generation the builder was created for (`current` for [`Context::builder`],
+/// `next` for [`GenerationBreeder::builder`]).
 pub struct IndividualBuilder<'a, G: Genome> {
     arena: &'a mut ExprArena<G::Tag>,
+    population: &'a mut Population<G>,
     ops: &'a OperationTable,
     rng: &'a mut dyn RngCore,
     params: Vec<Scalar>,
@@ -80,76 +120,65 @@ pub struct IndividualBuilder<'a, G: Genome> {
 impl<G: Genome> Context<G> {
     pub const fn new(op: OperationTable) -> Self {
         Self {
-            arena_a: ExprArena::new(),
-            arena_b: ExprArena::new(),
-            current_buffer: CurrentBuffer::A,
+            current: Generation::new(),
+            next: Generation::new(),
             operations: op,
         }
     }
 
-    /// Returns `(source_arena, dest_arena, ops)`. Source is the current live buffer;
-    /// dest is the buffer offspring are built into.
-    pub fn borrow_parts(&mut self) -> (&ExprArena<G::Tag>, &mut ExprArena<G::Tag>, &OperationTable) {
-        match self.current_buffer {
-            CurrentBuffer::A => (&self.arena_a, &mut self.arena_b, &self.operations),
-            CurrentBuffer::B => (&self.arena_b, &mut self.arena_a, &self.operations),
-        }
+    /// Promotes the freshly-bred `next` generation to `current`. The old
+    /// current generation is cleared, ready to receive the one after.
+    pub fn advance(&mut self) {
+        std::mem::swap(&mut self.current, &mut self.next);
+        self.next.clear();
     }
 
-    /// Returns an immutable reference to the currently active (source) arena.
-    pub fn source_arena(&self) -> &ExprArena<G::Tag> {
-        match self.current_buffer {
-            CurrentBuffer::A => &self.arena_a,
-            CurrentBuffer::B => &self.arena_b,
-        }
+    /// Returns a [`GenerationBreeder`] view over `current` (read) and `next` (write) to
+    /// build the next generation. Finalize the cycle with [`Context::advance`].
+    ///
+    /// This borrows the whole context mutably; if a reference into `current`
+    /// (e.g. a selected parent) is already held, assemble the view from the
+    /// fields with [`GenerationBreeder::new`] instead.
+    pub fn breeder(&mut self) -> GenerationBreeder<'_, G> {
+        GenerationBreeder::new(&self.current, &mut self.next, &self.operations)
     }
 
-    /// Swaps the active buffer. The old dest becomes the new source.
-    /// The new dest is cleared, ready for the next generation.
-    pub fn swap(&mut self) {
-        self.current_buffer = match self.current_buffer {
-            CurrentBuffer::A => {
-                self.arena_a.clear();
-                CurrentBuffer::B
-            }
-            CurrentBuffer::B => {
-                self.arena_b.clear();
-                CurrentBuffer::A
-            }
-        };
-    }
-
-    /// Returns a builder for constructing a single individual into the active
-    /// (source) arena. Call [`IndividualBuilder::finish`] once the root node is
-    /// ready to register the root and obtain the [`Individual`].
+    /// Returns a builder for constructing a single individual into the
+    /// `current` generation. [`IndividualBuilder::finish`] registers the root
+    /// and inserts the individual (unscored), returning a reference to it.
     pub fn builder<'a>(&'a mut self, rng: &'a mut dyn RngCore) -> IndividualBuilder<'a, G> {
-        let arena = match self.current_buffer {
-            CurrentBuffer::A => &mut self.arena_a,
-            CurrentBuffer::B => &mut self.arena_b,
-        };
-        IndividualBuilder::new(arena, &self.operations, rng)
+        IndividualBuilder::new(
+            &mut self.current.arena,
+            &mut self.current.population,
+            &self.operations,
+            rng,
+        )
     }
 }
 
 impl<'a, G: Genome> IndividualBuilder<'a, G> {
     pub(crate) fn new(
         arena: &'a mut ExprArena<G::Tag>,
+        population: &'a mut Population<G>,
         ops: &'a OperationTable,
         rng: &'a mut dyn RngCore,
     ) -> Self {
         Self {
             arena,
+            population,
             ops,
             rng,
             params: Vec::new(),
         }
     }
 
-    /// Register `root_node` as an expression root and return the finished
-    /// individual. Consumes the builder.
-    pub fn finish(self, root_node: NodeId) -> (Individual<G>, RootId) {
+    /// Registers `root_node` as an expression root, inserts the finished
+    /// (unscored) individual into the builder's population, and returns a
+    /// mutable reference to it (e.g. to seed its fitness). Consumes the
+    /// builder.
+    pub fn finish(self, root_node: NodeId) -> &'a mut Individual<G> {
         let root = self.arena.add_root(root_node);
-        (Individual::new(root, self.params), root)
+        self.population.insert(Individual::new(root, self.params))
     }
 }
 
@@ -170,32 +199,6 @@ impl<'a, G: Genome> NodeBuilder<G> for IndividualBuilder<'a, G> {
         let id = ParameterId::from(self.params.len() as u16);
         self.params.push(value);
         id
-    }
-}
-
-impl<G: Genome> Population<G> {
-    pub fn new(individuals: Vec<Individual<G>>) -> Self {
-        Self { individuals }
-    }
-
-    pub fn len(&self) -> usize {
-        self.individuals.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.individuals.is_empty()
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &Individual<G>> {
-        self.individuals.iter()
-    }
-
-    pub fn individuals(&self) -> &[Individual<G>] {
-        &self.individuals
-    }
-
-    pub fn into_individuals(self) -> Vec<Individual<G>> {
-        self.individuals
     }
 }
 

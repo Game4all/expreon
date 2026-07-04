@@ -241,7 +241,9 @@ mod tests {
     use rand::SeedableRng;
     use rand::rngs::StdRng;
 
-    use expreon_ast::{ExprArena, ExprNode, NodeId, NodeKind, OperationId, ParameterId, RootId, Scalar};
+    use expreon_ast::{
+        ExprArena, ExprNode, NodeId, NodeKind, OperationId, ParameterId, RootId, Scalar,
+    };
     use expreon_eval::ops::{OperationTable, OperationTableBuilder, builtin::MathBaseOps};
 
     use crate::gp::{
