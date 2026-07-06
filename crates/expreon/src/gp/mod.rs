@@ -9,12 +9,14 @@ use crate::gp::builder::NodeBuilder;
 
 pub mod breeding;
 pub mod builder;
+pub mod fitness;
 pub mod mutation;
 pub mod population;
 pub mod subtree;
 
 pub use breeding::GenerationBreeder;
-pub use population::{Fitness, Population};
+pub use fitness::{Fitness, ParetoFitness, ScalarFitness};
+pub use population::{Population, Scored};
 
 /// Base trait for a genome.
 ///
@@ -35,13 +37,14 @@ pub trait Genome: Clone {
     fn get_tag_for_node(kind: NodeKind) -> Self::Tag;
 }
 
-/// A single individual in the population.
-/// Holds a reference to its root expression node, its parameters, and its
-/// fitness (`None` until scored).
+/// A single individual: its genetic material only — the root expression node
+/// and its parameters. Fitness is *not* held here; it lives alongside the
+/// individual in the [`Population`] (see [`Scored`]), so anything that
+/// manipulates genetic material (mutation, AST building) stays free of the
+/// fitness type.
 pub struct Individual<G: Genome> {
     pub root: RootId,
     pub parameters: Vec<Scalar>,
-    pub fitness: Option<Fitness>,
     _ctx: PhantomData<G>,
 }
 
@@ -50,7 +53,6 @@ impl<G: Genome> Individual<G> {
         Self {
             root,
             parameters,
-            fitness: None,
             _ctx: PhantomData,
         }
     }
@@ -59,12 +61,12 @@ impl<G: Genome> Individual<G> {
 /// One generation: an expression arena together with the population of
 /// individuals whose roots live in it. An individual's `RootId` is only
 /// meaningful paired with its generation's arena.
-pub struct Generation<G: Genome> {
+pub struct Generation<G: Genome, F: Fitness> {
     pub arena: ExprArena<G::Tag>,
-    pub population: Population<G>,
+    pub population: Population<G, F>,
 }
 
-impl<G: Genome> Generation<G> {
+impl<G: Genome, F: Fitness> Generation<G, F> {
     /// An empty generation.
     pub const fn new() -> Self {
         Self {
@@ -80,7 +82,7 @@ impl<G: Genome> Generation<G> {
     }
 }
 
-impl<G: Genome> Default for Generation<G> {
+impl<G: Genome, F: Fitness> Default for Generation<G, F> {
     fn default() -> Self {
         Self::new()
     }
@@ -97,9 +99,9 @@ impl<G: Genome> Default for Generation<G> {
 /// (`&ctx.current.arena`, `&mut ctx.current.population`, ...) lets the borrow
 /// checker split the borrows — e.g. reading the arena while writing fitness
 /// into the population.
-pub struct Context<G: Genome> {
-    pub current: Generation<G>,
-    pub next: Generation<G>,
+pub struct Context<G: Genome, F: Fitness> {
+    pub current: Generation<G, F>,
+    pub next: Generation<G, F>,
     pub operations: OperationTable,
 }
 
@@ -109,15 +111,15 @@ pub struct Context<G: Genome> {
 /// reference to it. The individual is built into, and inserted into, the
 /// generation the builder was created for (`current` for [`Context::builder`],
 /// `next` for [`GenerationBreeder::builder`]).
-pub struct IndividualBuilder<'a, G: Genome> {
+pub struct IndividualBuilder<'a, G: Genome, F: Fitness> {
     arena: &'a mut ExprArena<G::Tag>,
-    population: &'a mut Population<G>,
+    population: &'a mut Population<G, F>,
     ops: &'a OperationTable,
     rng: &'a mut dyn RngCore,
     params: Vec<Scalar>,
 }
 
-impl<G: Genome> Context<G> {
+impl<G: Genome, F: Fitness> Context<G, F> {
     pub const fn new(op: OperationTable) -> Self {
         Self {
             current: Generation::new(),
@@ -139,14 +141,14 @@ impl<G: Genome> Context<G> {
     /// This borrows the whole context mutably; if a reference into `current`
     /// (e.g. a selected parent) is already held, assemble the view from the
     /// fields with [`GenerationBreeder::new`] instead.
-    pub fn breeder(&mut self) -> GenerationBreeder<'_, G> {
+    pub fn breeder(&mut self) -> GenerationBreeder<'_, G, F> {
         GenerationBreeder::new(&self.current, &mut self.next, &self.operations)
     }
 
     /// Returns a builder for constructing a single individual into the
     /// `current` generation. [`IndividualBuilder::finish`] registers the root
     /// and inserts the individual (unscored), returning a reference to it.
-    pub fn builder<'a>(&'a mut self, rng: &'a mut dyn RngCore) -> IndividualBuilder<'a, G> {
+    pub fn builder<'a>(&'a mut self, rng: &'a mut dyn RngCore) -> IndividualBuilder<'a, G, F> {
         IndividualBuilder::new(
             &mut self.current.arena,
             &mut self.current.population,
@@ -156,10 +158,10 @@ impl<G: Genome> Context<G> {
     }
 }
 
-impl<'a, G: Genome> IndividualBuilder<'a, G> {
+impl<'a, G: Genome, F: Fitness> IndividualBuilder<'a, G, F> {
     pub(crate) fn new(
         arena: &'a mut ExprArena<G::Tag>,
-        population: &'a mut Population<G>,
+        population: &'a mut Population<G, F>,
         ops: &'a OperationTable,
         rng: &'a mut dyn RngCore,
     ) -> Self {
@@ -174,15 +176,15 @@ impl<'a, G: Genome> IndividualBuilder<'a, G> {
 
     /// Registers `root_node` as an expression root, inserts the finished
     /// (unscored) individual into the builder's population, and returns a
-    /// mutable reference to it (e.g. to seed its fitness). Consumes the
-    /// builder.
-    pub fn finish(self, root_node: NodeId) -> &'a mut Individual<G> {
+    /// mutable reference to its [`Scored`] slot (e.g. to seed its fitness).
+    /// Consumes the builder.
+    pub fn finish(self, root_node: NodeId) -> &'a mut Scored<G, F> {
         let root = self.arena.add_root(root_node);
         self.population.insert(Individual::new(root, self.params))
     }
 }
 
-impl<'a, G: Genome> NodeBuilder<G> for IndividualBuilder<'a, G> {
+impl<'a, G: Genome, F: Fitness> NodeBuilder<G> for IndividualBuilder<'a, G, F> {
     fn rng(&mut self) -> &mut dyn RngCore {
         self.rng
     }
