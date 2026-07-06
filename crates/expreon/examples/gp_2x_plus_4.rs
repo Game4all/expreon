@@ -13,7 +13,7 @@ use std::cmp::Ordering;
 
 use expreon::gp::{
     Context, Fitness, GenerationBreeder, Genome, Individual, ParetoFitness, Population,
-    ScalarFitness, Scored,
+    ScalarFitness, Scored, k_best_of_with_comparator, k_tournament_selection_with_comparator,
     mutation::{
         Mutator,
         builtin::{
@@ -26,8 +26,8 @@ use expreon::gp::{
 use expreon::ops::builtin::{Add, Div, MathBaseOps, Mul, Sub};
 use expreon::prelude::*;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
+use rand::SeedableRng;
 use rand::rngs::StdRng;
-use rand::{Rng, RngCore, SeedableRng};
 
 /// A simple genome with 2D inputs
 #[derive(Clone)]
@@ -58,7 +58,7 @@ fn build_op_table() -> OperationTable {
 /// break genuine trade-offs (incomparable fitnesses) by MSE (the accuracy
 /// objective). Unscored individuals are treated as worst. `Greater` means `a`
 /// is better.
-fn quality(
+fn fitness_comparator(
     a: &Scored<Scalar2DGenome, FitnessMetric>,
     b: &Scored<Scalar2DGenome, FitnessMetric>,
 ) -> Ordering {
@@ -70,28 +70,11 @@ fn quality(
         .unwrap_or_else(|| fa.0[OBJ_MSE].quality_cmp(&fb.0[OBJ_MSE]).unwrap())
 }
 
-/// k-tournament: returns the highest-quality candidate among k draws.
-fn tournament<'p>(
-    pop: &'p Population<Scalar2DGenome, FitnessMetric>,
-    k: usize,
-    rng: &mut dyn RngCore,
-) -> &'p Scored<Scalar2DGenome, FitnessMetric> {
-    let n = pop.len();
-    let mut best = &pop[rng.random_range(0..n)];
-    for _ in 1..k {
-        let candidate = &pop[rng.random_range(0..n)];
-        if quality(candidate, best) == Ordering::Greater {
-            best = candidate;
-        }
-    }
-    best
-}
-
 /// Returns the highest-quality individual in `pop`.
 fn best_of(
     pop: &Population<Scalar2DGenome, FitnessMetric>,
 ) -> &Scored<Scalar2DGenome, FitnessMetric> {
-    pop.iter().max_by(|a, b| quality(a, b)).unwrap()
+    k_best_of_with_comparator(pop, 1, fitness_comparator).into_iter().next().unwrap()
 }
 
 /// MSE of `ind` on `inputs` / `targets`.
@@ -313,7 +296,8 @@ fn main() {
             // Elitism: carry the best individual over unchanged (keeps its fitness).
             breeding.copy_individual_over(best);
             for _ in 1..POP_SIZE {
-                let parent = tournament(&breeding.source.population, K, &mut rng);
+                let parent =
+                    k_tournament_selection_with_comparator(&breeding.source.population, K, &mut rng, fitness_comparator);
                 breeding.breed(parent, &mutator, &mut rng);
             }
         }

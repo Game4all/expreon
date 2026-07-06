@@ -1,6 +1,10 @@
 use std::cmp::Ordering;
 
+use rand::{Rng, RngCore};
+
 use expreon_ast::Scalar;
+
+use crate::gp::{Genome, Population, Scored};
 
 /// Fitness metric of an individual, comparable by quality.
 ///
@@ -87,9 +91,185 @@ impl<const N: usize> Fitness for ParetoFitness<N> {
     }
 }
 
+/// Default comparator ranking [`Scored`] individuals by [`Fitness::quality_cmp`]:
+/// an unscored individual is worst, and a genuine trade-off (`None`) compares
+/// equal. Used by [`k_best_of`] and [`k_tournament_selection`]; pass a custom
+/// comparator to [`k_best_of_with_quality`] / [`k_tournament_selection_with_quality`]
+/// instead when trade-offs need a tie-break (e.g. a secondary objective).
+fn compare_by_fitness<G, F>(a: &Scored<G, F>, b: &Scored<G, F>) -> Ordering
+where
+    G: Genome,
+    F: Fitness,
+{
+    match (&a.fitness, &b.fitness) {
+        (Some(fa), Some(fb)) => fa.quality_cmp(fb).unwrap_or(Ordering::Equal),
+        (Some(_), None) => Ordering::Greater,
+        (None, Some(_)) => Ordering::Less,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+/// Returns the `k` best individuals of `pop`, best first, ranked by
+/// [`Fitness::quality_cmp`] (unscored individuals are treated as worst; a
+/// genuine trade-off compares equal). See [`k_best_of_with_quality`] to
+/// supply a custom comparator.
+#[inline(always)]
+pub fn k_best_of<G, F>(pop: &Population<G, F>, k: usize) -> Vec<&Scored<G, F>>
+where
+    G: Genome,
+    F: Fitness,
+{
+    k_best_of_with_comparator(pop, k, compare_by_fitness)
+}
+
+/// Returns the `k` best individuals of `pop`, best first, ranked by `compare`
+/// (`Greater` = the first argument is better). `k` is clamped to the population
+/// size; an empty population (or `k == 0`) yields an empty vec.
+pub fn k_best_of_with_comparator<'p, G, F>(
+    pop: &'p Population<G, F>,
+    k: usize,
+    compare: impl Fn(&Scored<G, F>, &Scored<G, F>) -> Ordering,
+) -> Vec<&'p Scored<G, F>>
+where
+    G: Genome,
+    F: Fitness,
+{
+    let mut ranked: Vec<&Scored<G, F>> = pop.iter().collect();
+    let k = k.min(ranked.len());
+    if k == 0 {
+        return Vec::new();
+    }
+    ranked.select_nth_unstable_by(k - 1, |a, b| compare(b, a));
+    ranked.truncate(k);
+    ranked.sort_by(|a, b| compare(b, a));
+    ranked
+}
+
+/// k-tournament selection: draws `k` random individuals (with replacement)
+/// from `pop` and returns a reference to the best, ranked by
+/// [`Fitness::quality_cmp`] (unscored individuals are treated as worst; a
+/// genuine trade-off compares equal). See
+/// [`k_tournament_selection_with_quality`] to supply a custom comparator.
+///
+/// Panics if `pop` is empty.
+pub fn k_tournament_selection<'p, G, F>(
+    pop: &'p Population<G, F>,
+    k: usize,
+    rng: &mut dyn RngCore,
+) -> &'p Scored<G, F>
+where
+    G: Genome,
+    F: Fitness,
+{
+    k_tournament_selection_with_comparator(pop, k, rng, compare_by_fitness)
+}
+
+/// k-tournament selection: draws `k` random individuals (with replacement) from
+/// `pop` and returns a reference to the best, ranked by `compare` (`Greater` =
+/// the first argument is better).
+///
+/// Panics if `pop` is empty.
+pub fn k_tournament_selection_with_comparator<'p, G, F>(
+    pop: &'p Population<G, F>,
+    k: usize,
+    rng: &mut dyn RngCore,
+    compare: impl Fn(&Scored<G, F>, &Scored<G, F>) -> Ordering,
+) -> &'p Scored<G, F>
+where
+    G: Genome,
+    F: Fitness,
+{
+    let n = pop.len();
+    let mut best = &pop[rng.random_range(0..n)];
+    for _ in 1..k {
+        let candidate = &pop[rng.random_range(0..n)];
+        if compare(candidate, best) == Ordering::Greater {
+            best = candidate;
+        }
+    }
+    best
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gp::test_genome::TestSimpleGenome;
+    use expreon_ast::RootId;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+
+    fn ind(root: usize) -> crate::gp::Individual<TestSimpleGenome> {
+        crate::gp::Individual::new(RootId::from(root), Vec::new())
+    }
+
+    fn quality(
+        a: &Scored<TestSimpleGenome, ScalarFitness>,
+        b: &Scored<TestSimpleGenome, ScalarFitness>,
+    ) -> Ordering {
+        a.fitness.unwrap().quality_cmp(&b.fitness.unwrap()).unwrap()
+    }
+
+    #[test]
+    fn k_best_with_quality_returns_best_first_and_clamps() {
+        let mut pop: Population<TestSimpleGenome, ScalarFitness> = Population::new();
+        pop.insert(ind(0)).fitness = Some(ScalarFitness(3.0));
+        pop.insert(ind(1)).fitness = Some(ScalarFitness(1.0));
+        pop.insert(ind(2)).fitness = Some(ScalarFitness(2.0));
+
+        let top2 = k_best_of_with_comparator(&pop, 2, quality);
+        assert_eq!(top2.len(), 2);
+        assert_eq!(top2[0].fitness, Some(ScalarFitness(1.0)));
+        assert_eq!(top2[1].fitness, Some(ScalarFitness(2.0)));
+
+        let clamped = k_best_of_with_comparator(&pop, 10, quality);
+        assert_eq!(clamped.len(), 3);
+
+        let empty = k_best_of_with_comparator(&pop, 0, quality);
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn k_best_of_with_quality_of_empty_population_is_empty() {
+        let pop: Population<TestSimpleGenome, ScalarFitness> = Population::new();
+        assert!(k_best_of_with_comparator(&pop, 3, quality).is_empty());
+    }
+
+    #[test]
+    fn tournament_with_quality_finds_the_dominant_individual() {
+        let mut pop: Population<TestSimpleGenome, ScalarFitness> = Population::new();
+        for i in 0..10 {
+            pop.insert(ind(i)).fitness = Some(ScalarFitness(i as f32));
+        }
+        let mut rng = StdRng::seed_from_u64(7);
+        // Enough draws that, with a fixed seed, the lone best (fitness 0.0) is
+        // certain to be sampled at least once.
+        let winner = k_tournament_selection_with_comparator(&pop, 200, &mut rng, quality);
+        assert_eq!(winner.fitness, Some(ScalarFitness(0.0)));
+    }
+
+    #[test]
+    fn k_best_of_uses_default_fitness_ordering_and_treats_unscored_as_worst() {
+        let mut pop: Population<TestSimpleGenome, ScalarFitness> = Population::new();
+        pop.insert(ind(0)).fitness = Some(ScalarFitness(3.0));
+        pop.insert(ind(1)).fitness = Some(ScalarFitness(1.0));
+        pop.insert(ind(2)); // unscored: worse than any scored individual
+
+        let top2 = k_best_of(&pop, 2);
+        assert_eq!(top2.len(), 2);
+        assert_eq!(top2[0].fitness, Some(ScalarFitness(1.0)));
+        assert_eq!(top2[1].fitness, Some(ScalarFitness(3.0)));
+    }
+
+    #[test]
+    fn k_tournament_selection_uses_default_fitness_ordering() {
+        let mut pop: Population<TestSimpleGenome, ScalarFitness> = Population::new();
+        for i in 0..10 {
+            pop.insert(ind(i)).fitness = Some(ScalarFitness(i as f32));
+        }
+        let mut rng = StdRng::seed_from_u64(7);
+        let winner = k_tournament_selection(&pop, 200, &mut rng);
+        assert_eq!(winner.fitness, Some(ScalarFitness(0.0)));
+    }
 
     #[test]
     fn lower_value_dominates_higher() {

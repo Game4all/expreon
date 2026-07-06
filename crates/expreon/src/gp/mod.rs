@@ -15,7 +15,10 @@ pub mod population;
 pub mod subtree;
 
 pub use breeding::GenerationBreeder;
-pub use fitness::{Fitness, ParetoFitness, ScalarFitness};
+pub use fitness::{
+    Fitness, ParetoFitness, ScalarFitness, k_best_of, k_best_of_with_comparator,
+    k_tournament_selection, k_tournament_selection_with_comparator,
+};
 pub use population::{Population, Scored};
 
 /// Base trait for a genome.
