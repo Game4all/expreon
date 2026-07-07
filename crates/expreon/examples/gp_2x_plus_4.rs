@@ -12,8 +12,8 @@
 use std::cmp::Ordering;
 
 use expreon::gp::{
-    Context, Fitness, GenerationBreeder, Genome, Individual, ParetoFitness, Population,
-    ScalarFitness, Scored, k_best_of_with_comparator, k_tournament_selection_with_comparator,
+    Context, Fitness, GenerationBreeder, Genome, Individual, IntegerFitness, ScalarFitness,
+    k_best_of, k_tournament_selection,
     mutation::{
         Mutator,
         builtin::{
@@ -21,6 +21,7 @@ use expreon::gp::{
             TerminalMutation,
         },
     },
+    pareto_cmp,
     subtree::{GrowSubtreeConfig, TreeGenConfig, TreeMethod, gen_tree},
 };
 use expreon::ops::builtin::{Add, Div, MathBaseOps, Mul, Sub};
@@ -39,42 +40,44 @@ impl Genome for Scalar2DGenome {
     fn get_tag_for_node(_: NodeKind) -> () {}
 }
 
-/// A pareto-front style fitness score
-type FitnessMetric = ParetoFitness<3>;
+/// Multi-objective fitness for the search: mean-squared error (accuracy) plus
+/// two integer size objectives, node count and tree depth. Compared by Pareto
+/// dominance across all three; genuine trade-offs are broken in favour of the
+/// lower MSE.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct RegressionFitness {
+    mse: ScalarFitness,
+    nodes: IntegerFitness,
+    depth: IntegerFitness,
+}
 
-// Objective indices into the  fitness metric defined above.
-const OBJ_MSE: usize = 0;
-const OBJ_NODES: usize = 1;
-const OBJ_DEPTH: usize = 2;
+impl RegressionFitness {
+    /// The worst possible fitness: every objective at its worst.
+    const WORST: Self = Self {
+        mse: ScalarFitness::WORST,
+        nodes: IntegerFitness::WORST,
+        depth: IntegerFitness::WORST,
+    };
+}
+
+impl Fitness for RegressionFitness {
+    fn quality_cmp(&self, other: &Self) -> Option<Ordering> {
+        let pareto = pareto_cmp([
+            self.mse.quality_cmp(&other.mse),
+            self.nodes.quality_cmp(&other.nodes),
+            self.depth.quality_cmp(&other.depth),
+        ]);
+        // Break genuine trade-offs by MSE (the accuracy objective) so the
+        // ordering is total; `quality_cmp` on scalars never returns `None`.
+        Some(pareto.unwrap_or_else(|| self.mse.quality_cmp(&other.mse).unwrap()))
+    }
+}
 
 /// Build the operation table
 fn build_op_table() -> OperationTable {
     let mut b = OperationTableBuilder::new();
     b.register_set::<MathBaseOps>();
     b.build()
-}
-
-/// Ranks two scored individuals by quality: prefer the Pareto-dominator, and
-/// break genuine trade-offs (incomparable fitnesses) by MSE (the accuracy
-/// objective). Unscored individuals are treated as worst. `Greater` means `a`
-/// is better.
-fn fitness_comparator(
-    a: &Scored<Scalar2DGenome, FitnessMetric>,
-    b: &Scored<Scalar2DGenome, FitnessMetric>,
-) -> Ordering {
-    let (fa, fb) = (
-        a.fitness.unwrap_or(FitnessMetric::WORST),
-        b.fitness.unwrap_or(FitnessMetric::WORST),
-    );
-    fa.quality_cmp(&fb)
-        .unwrap_or_else(|| fa.0[OBJ_MSE].quality_cmp(&fb.0[OBJ_MSE]).unwrap())
-}
-
-/// Returns the highest-quality individual in `pop`.
-fn best_of(
-    pop: &Population<Scalar2DGenome, FitnessMetric>,
-) -> &Scored<Scalar2DGenome, FitnessMetric> {
-    k_best_of_with_comparator(pop, 1, fitness_comparator).into_iter().next().unwrap()
 }
 
 /// MSE of `ind` on `inputs` / `targets`.
@@ -129,15 +132,15 @@ fn node_count(root: RootId, arena: &ExprArena<()>) -> usize {
         .map_or(0, |n| arena.iter_expr_nodes(n).count())
 }
 
-const POP_SIZE: usize = 20_000;
+const POP_SIZE: usize = 10_000;
 const GEN_COUNT: usize = 500;
-const K: usize = 150; // tournament size
+const K: usize = 15; // tournament size
 const EPSILON: f32 = 1e-12;
 const MSE_TARGET: f32 = 1e-9; // constant by which to stop accounting for MSE and look at other pareto criterias
 
 // Score every unscored individual in the current generation
 fn evaluate_population(
-    ctx: &mut Context<Scalar2DGenome, FitnessMetric>,
+    ctx: &mut Context<Scalar2DGenome, RegressionFitness>,
     inputs: &ArrayView2<Scalar>,
     targets: &ArrayView1<Scalar>,
 ) {
@@ -146,11 +149,11 @@ fn evaluate_population(
     ctx.current.population.score_unscored(|ind| {
         let raw = mse(ind, &eval, *inputs, targets.view());
         let accuracy = if raw < MSE_TARGET { 0.0 } else { raw };
-        ParetoFitness([
-            ScalarFitness(accuracy),
-            ScalarFitness(node_count(ind.root, arena) as f32),
-            ScalarFitness(tree_depth(ind.root, arena) as f32),
-        ])
+        RegressionFitness {
+            mse: accuracy.into(),
+            nodes: node_count(ind.root, arena).into(),
+            depth: tree_depth(ind.root, arena).into(),
+        }
     });
 }
 
@@ -209,7 +212,7 @@ fn main() {
         const_range: (-5.0, 5.0),
     };
 
-    let mut gp_context: Context<Scalar2DGenome, FitnessMetric> = Context::new(build_op_table());
+    let mut gp_context: Context<Scalar2DGenome, RegressionFitness> = Context::new(build_op_table());
     let mut rng = StdRng::seed_from_u64(42);
 
     let mut mutator: Mutator<Scalar2DGenome> = Mutator::new();
@@ -261,8 +264,11 @@ fn main() {
         // depth come straight from the (unsnapped) fitness vector; the MSE
         // objective is snapped once solved, so recompute the true MSE here for
         // reporting and the convergence check.
-        let best = best_of(&gp_context.current.population);
-        let best_fitness = best.fitness.unwrap_or(FitnessMetric::WORST);
+        let best = k_best_of(&gp_context.current.population, 1)
+            .into_iter()
+            .next()
+            .unwrap();
+        let best_fitness = best.fitness.unwrap_or(RegressionFitness::WORST);
         let raw_mse = {
             let arena = &gp_context.current.arena;
             let eval = ExprEvalContext::new(arena, &gp_context.operations);
@@ -272,10 +278,7 @@ fn main() {
         if generation % 10 == 0 || raw_mse < EPSILON {
             println!(
                 "gen {:3}: MSE={:.4e}  nodes={}  depth={}",
-                generation,
-                raw_mse,
-                best_fitness.0[OBJ_NODES].0 as usize,
-                best_fitness.0[OBJ_DEPTH].0 as usize,
+                generation, raw_mse, best_fitness.nodes.0, best_fitness.depth.0,
             );
         }
 
@@ -296,8 +299,7 @@ fn main() {
             // Elitism: carry the best individual over unchanged (keeps its fitness).
             breeding.copy_individual_over(best);
             for _ in 1..POP_SIZE {
-                let parent =
-                    k_tournament_selection_with_comparator(&breeding.source.population, K, &mut rng, fitness_comparator);
+                let parent = k_tournament_selection(&breeding.source.population, K, &mut rng);
                 breeding.breed(parent, &mutator, &mut rng);
             }
         }
@@ -308,7 +310,10 @@ fn main() {
     // The last generation produced by the loop is unscored after the final
     // advance; score it before reporting the overall best.
     evaluate_population(&mut gp_context, &inputs.view(), &targets.view());
-    let best = best_of(&gp_context.current.population);
+    let best = k_best_of(&gp_context.current.population, 1)
+        .into_iter()
+        .next()
+        .unwrap();
 
     let arena = &gp_context.current.arena;
     let root_node = arena.get_root(best.individual.root).unwrap();

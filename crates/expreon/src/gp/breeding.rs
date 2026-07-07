@@ -38,10 +38,10 @@ impl<'a, G: Genome, F: Fitness> GenerationBreeder<'a, G, F> {
             .copy_root_over(parent.individual.root, &mut self.dest.arena)
             .expect("invalid root in copy_individual_over");
 
-        let child = self
-            .dest
-            .population
-            .insert(Individual::new(new_root, parent.individual.parameters.clone()));
+        let child = self.dest.population.insert(Individual::new(
+            new_root,
+            parent.individual.parameters.clone(),
+        ));
         child.fitness = parent.fitness.clone();
         child
     }

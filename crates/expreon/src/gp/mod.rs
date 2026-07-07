@@ -16,8 +16,8 @@ pub mod subtree;
 
 pub use breeding::GenerationBreeder;
 pub use fitness::{
-    Fitness, ParetoFitness, ScalarFitness, k_best_of, k_best_of_with_comparator,
-    k_tournament_selection, k_tournament_selection_with_comparator,
+    Fitness, IntegerFitness, ParetoFitness, ScalarFitness, k_best_of, k_best_of_with_comparator,
+    k_tournament_selection, k_tournament_selection_with_comparator, pareto_cmp,
 };
 pub use population::{Population, Scored};
 

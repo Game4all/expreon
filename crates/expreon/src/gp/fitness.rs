@@ -62,6 +62,40 @@ impl From<ScalarFitness> for f32 {
     }
 }
 
+/// A single-objective fitness backed by an unsigned integer where **lower is
+/// better**: a smaller value dominates. Suited to discrete objectives such as
+/// node counts or tree depth. Unlike [`ScalarFitness`] it is totally ordered
+/// (no NaN), so [`Fitness::quality_cmp`] never returns `None`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IntegerFitness(pub usize);
+
+impl IntegerFitness {
+    pub const WORST: IntegerFitness = IntegerFitness(usize::MAX);
+
+    pub const fn new(value: usize) -> Self {
+        Self(value)
+    }
+}
+
+impl Fitness for IntegerFitness {
+    fn quality_cmp(&self, other: &Self) -> Option<Ordering> {
+        // lower is better: order `other` against `self` (mirrors ScalarFitness).
+        Some(other.0.cmp(&self.0))
+    }
+}
+
+impl From<usize> for IntegerFitness {
+    fn from(v: usize) -> Self {
+        Self(v)
+    }
+}
+
+impl From<IntegerFitness> for usize {
+    fn from(f: IntegerFitness) -> Self {
+        f.0
+    }
+}
+
 /// A multi-objective fitness: `N` criteria, **all lower-is-better**, compared
 /// by Pareto dominance. One fitness dominates another when it is at least as
 /// good on every criterion and strictly better on at least one; when each is
@@ -77,18 +111,29 @@ impl<const N: usize> ParetoFitness<N> {
 
 impl<const N: usize> Fitness for ParetoFitness<N> {
     fn quality_cmp(&self, other: &Self) -> Option<Ordering> {
-        let mut acc = Ordering::Equal;
-        for (a, b) in self.0.iter().zip(other.0.iter()) {
-            match a.quality_cmp(b)? {
-                // `?`: an incomparable component makes the whole vector so.
-                Ordering::Equal => {}
-                ord if acc == Ordering::Equal => acc = ord,
-                ord if ord != acc => return None, // better on one axis, worse on another
-                _ => {}
-            }
-        }
-        Some(acc)
+        pareto_cmp(self.0.iter().zip(&other.0).map(|(a, b)| a.quality_cmp(b)))
     }
+}
+
+/// Folds per-criterion quality comparisons into a single Pareto ordering.
+///
+/// Each item is one criterion's [`Fitness::quality_cmp`] result. Returns
+/// `Some(Greater)`/`Some(Less)` when one side dominates (better-or-equal on
+/// every criterion, strictly better on at least one), `Some(Equal)` when equal
+/// on all, and `None` for a genuine trade-off — better on one criterion, worse
+/// on another — or when any criterion is itself incomparable.
+pub fn pareto_cmp(components: impl IntoIterator<Item = Option<Ordering>>) -> Option<Ordering> {
+    let mut acc = Ordering::Equal;
+    for cmp in components {
+        match cmp? {
+            // `?`: an incomparable component makes the whole vector so.
+            Ordering::Equal => {}
+            ord if acc == Ordering::Equal => acc = ord,
+            ord if ord != acc => return None, // better on one axis, worse on another
+            _ => {}
+        }
+    }
+    Some(acc)
 }
 
 /// Default comparator ranking [`Scored`] individuals by [`Fitness::quality_cmp`]:
@@ -152,6 +197,7 @@ where
 /// [`k_tournament_selection_with_quality`] to supply a custom comparator.
 ///
 /// Panics if `pop` is empty.
+#[inline(always)]
 pub fn k_tournament_selection<'p, G, F>(
     pop: &'p Population<G, F>,
     k: usize,
@@ -301,6 +347,22 @@ mod tests {
         assert!(!ScalarFitness::WORST.dominates(&ScalarFitness(1000.0)));
     }
 
+    #[test]
+    fn integer_lower_value_dominates_higher() {
+        assert!(IntegerFitness(1).dominates(&IntegerFitness(2)));
+        assert!(!IntegerFitness(2).dominates(&IntegerFitness(1)));
+        assert_eq!(
+            IntegerFitness(3).quality_cmp(&IntegerFitness(3)),
+            Some(Ordering::Equal)
+        );
+    }
+
+    #[test]
+    fn integer_worst_is_dominated_by_any_finite_fitness() {
+        assert!(IntegerFitness(1000).dominates(&IntegerFitness::WORST));
+        assert!(!IntegerFitness::WORST.dominates(&IntegerFitness(1000)));
+    }
+
     fn pareto<const N: usize>(vals: [f32; N]) -> ParetoFitness<N> {
         ParetoFitness(vals.map(ScalarFitness))
     }
@@ -338,5 +400,21 @@ mod tests {
         let finite = pareto([1000.0, 1000.0, 1000.0]);
         assert!(finite.dominates(&ParetoFitness::<3>::WORST));
         assert!(!ParetoFitness::<3>::WORST.dominates(&finite));
+    }
+
+    #[test]
+    fn pareto_cmp_combines_criteria() {
+        use Ordering::{Equal, Greater, Less};
+        // Better-or-equal on all, strictly better on one → dominates.
+        assert_eq!(
+            pareto_cmp([Some(Greater), Some(Equal), Some(Greater)]),
+            Some(Greater)
+        );
+        // Better on one axis, worse on another → genuine trade-off.
+        assert_eq!(pareto_cmp([Some(Greater), Some(Less)]), None);
+        // Equal on every axis.
+        assert_eq!(pareto_cmp([Some(Equal), Some(Equal)]), Some(Equal));
+        // An incomparable component poisons the whole comparison.
+        assert_eq!(pareto_cmp([Some(Greater), None]), None);
     }
 }
