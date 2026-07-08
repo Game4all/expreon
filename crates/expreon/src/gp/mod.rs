@@ -7,11 +7,11 @@ use expreon_eval::ops::OperationTable;
 
 use crate::gp::builder::NodeBuilder;
 
-pub mod breeding;
-pub mod builder;
+pub(crate) mod breeding;
+pub(crate) mod builder;
 pub mod fitness;
 pub mod mutation;
-pub mod population;
+pub(crate) mod population;
 pub mod subtree;
 
 pub use breeding::GenerationBreeder;
@@ -41,7 +41,7 @@ pub trait Genome: Clone {
 }
 
 /// A single individual: contains an handle to the root expression node
-/// and its parameters. 
+/// and its parameters.
 pub struct Individual<G: Genome> {
     pub root: RootId,
     pub parameters: Vec<Scalar>,
