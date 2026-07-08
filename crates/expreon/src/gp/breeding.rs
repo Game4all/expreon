@@ -115,18 +115,13 @@ mod tests {
             b.finish(node).fitness = Some(ScalarFitness(42.0));
         }
 
-        // Copy it into the next generation, then make that generation current.
-        // `parent` borrows `ctx.current` (shared) while `Breeding::new` borrows
-        // `ctx.next` mutably — disjoint field borrows.
         let parent = &ctx.current.population[0];
         let mut breeding = GenerationBreeder::new(&ctx.current, &mut ctx.next, &ctx.operations);
         breeding.copy_individual_over(parent);
         ctx.advance();
 
         let copied = &ctx.current.population[0];
-        // Fitness carried over (elitism skips re-evaluation)...
         assert_eq!(copied.fitness, Some(ScalarFitness(42.0)));
-        // ...and the AST + parameters were deep-copied into the dest arena.
         assert_eq!(copied.individual.parameters, vec![1.5]);
         assert!(ctx.current.arena.get_root(copied.individual.root).is_some());
     }

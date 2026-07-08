@@ -40,11 +40,8 @@ pub trait Genome: Clone {
     fn get_tag_for_node(kind: NodeKind) -> Self::Tag;
 }
 
-/// A single individual: its genetic material only — the root expression node
-/// and its parameters. Fitness is *not* held here; it lives alongside the
-/// individual in the [`Population`] (see [`Scored`]), so anything that
-/// manipulates genetic material (mutation, AST building) stays free of the
-/// fitness type.
+/// A single individual: contains an handle to the root expression node
+/// and its parameters. 
 pub struct Individual<G: Genome> {
     pub root: RootId,
     pub parameters: Vec<Scalar>,
@@ -100,7 +97,7 @@ impl<G: Genome, F: Fitness> Default for Generation<G, F> {
 ///
 /// The fields are public on purpose: accessing them directly
 /// (`&ctx.current.arena`, `&mut ctx.current.population`, ...) lets the borrow
-/// checker split the borrows — e.g. reading the arena while writing fitness
+/// checker split the borrows for ie. reading the arena while writing fitness
 /// into the population.
 pub struct Context<G: Genome, F: Fitness> {
     pub current: Generation<G, F>,
@@ -112,8 +109,7 @@ pub struct Context<G: Genome, F: Fitness> {
 /// individual by hand. Call [`IndividualBuilder::finish`] to register the root
 /// and insert the individual into the target generation, obtaining a mutable
 /// reference to it. The individual is built into, and inserted into, the
-/// generation the builder was created for (`current` for [`Context::builder`],
-/// `next` for [`GenerationBreeder::builder`]).
+/// generation the builder was created for.
 pub struct IndividualBuilder<'a, G: Genome, F: Fitness> {
     arena: &'a mut ExprArena<G::Tag>,
     population: &'a mut Population<G, F>,

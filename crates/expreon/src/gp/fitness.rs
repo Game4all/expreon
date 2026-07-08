@@ -120,8 +120,7 @@ impl<const N: usize> Fitness for ParetoFitness<N> {
 /// Each item is one criterion's [`Fitness::quality_cmp`] result. Returns
 /// `Some(Greater)`/`Some(Less)` when one side dominates (better-or-equal on
 /// every criterion, strictly better on at least one), `Some(Equal)` when equal
-/// on all, and `None` for a genuine trade-off — better on one criterion, worse
-/// on another — or when any criterion is itself incomparable.
+/// on all, and `None` for a genuine trade-off, better on one, worse ou no-better on another
 pub fn pareto_cmp(components: impl IntoIterator<Item = Option<Ordering>>) -> Option<Ordering> {
     let mut acc = Ordering::Equal;
     for cmp in components {

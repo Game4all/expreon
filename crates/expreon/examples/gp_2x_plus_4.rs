@@ -254,7 +254,8 @@ fn main() {
         b.finish(root);
     }
 
-    println!("Symbolic regression — target: 2x² + 4y + 3 (2-D input)");
+    println!("Symbolic regression example");
+    println!("Target expression: 2x² + 4y + 3 (2-D input)");
     println!("pop={POP_SIZE}  gens={GEN_COUNT}  tournament k={K}\n");
 
     for generation in 0..GEN_COUNT {
