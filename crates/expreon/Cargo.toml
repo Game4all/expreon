@@ -1,6 +1,7 @@
 [package]
 name = "expreon"
-version = "0.1.0"
+authors = ["Lucas A. <game4allyt@gmail.com>"]
+version = "0.0.1"
 edition = "2024"
 
 [dependencies]
