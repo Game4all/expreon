@@ -11,21 +11,24 @@
 
 use std::cmp::Ordering;
 
-use expreon::gp::{
-    Context, Fitness, GenerationBreeder, Genome, Individual, IntegerFitness, ScalarFitness,
-    k_best_of, k_tournament_selection,
-    mutation::{
-        Mutator,
-        builtin::{
-            HoistMutation, InsertMutation, ParamJitter, PointMutation, SubtreeMutation,
-            TerminalMutation,
-        },
-    },
-    pareto_cmp,
-    subtree::{GrowSubtreeConfig, TreeGenConfig, TreeMethod, gen_tree},
-};
 use expreon::ops::builtin::{Add, Div, MathBaseOps, Mul, Sub};
-use expreon::prelude::*;
+use expreon::{
+    eval::{EvalBufferStack, VectorizedEvalContext},
+    gp::{
+        Context, Fitness, GenerationBreeder, Genome, Individual, IntegerFitness, ScalarFitness,
+        fitness::pareto_cmp,
+        k_best_of, k_tournament_selection,
+        mutation::{
+            Mutator,
+            builtin::{
+                HoistMutation, InsertMutation, ParamJitter, PointMutation, SubtreeMutation,
+                TerminalMutation,
+            },
+        },
+        subtree::{GrowSubtreeConfig, TreeGenConfig, TreeMethod, gen_tree},
+    },
+    prelude::*,
+};
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
@@ -83,9 +86,10 @@ fn build_op_table() -> OperationTable {
 /// MSE of `ind` on `inputs` / `targets`.
 fn mse(
     ind: &Individual<Scalar2DGenome>,
-    eval: &ExprEvalContext<'_, '_, ()>,
+    eval: &VectorizedEvalContext<'_, '_, ()>,
     inputs: ArrayView2<Scalar>,
     targets: ArrayView1<Scalar>,
+    stack: &mut EvalBufferStack,
 ) -> f32 {
     let root_node = match eval.arena.get_root(ind.root) {
         Some(n) => n,
@@ -95,13 +99,14 @@ fn mse(
     let batch = inputs.nrows();
     let params_arr = make_params_array(&ind.parameters, batch);
 
-    let preds = eval.eval_batch(root_node, inputs, params_arr.view());
-    let err: f32 = preds
+    let preds_buf = eval.eval_batch(root_node, inputs, params_arr.view(), stack);
+    let err: f32 = preds_buf
         .iter()
         .zip(targets.iter())
         .map(|(&p, &t)| (p - t).powi(2))
         .sum::<f32>()
         / batch as f32;
+    stack.reclaim(preds_buf);
 
     if err.is_nan() || err.is_infinite() {
         f32::MAX
@@ -133,9 +138,8 @@ fn node_count(root: RootId, arena: &ExprArena<()>) -> usize {
 }
 
 const POP_SIZE: usize = 10_000;
-const GEN_COUNT: usize = 500;
+const GEN_COUNT: usize = 250;
 const K: usize = 15; // tournament size
-const EPSILON: f32 = 1e-12;
 const MSE_TARGET: f32 = 1e-9; // constant by which to stop accounting for MSE and look at other pareto criterias
 
 // Score every unscored individual in the current generation
@@ -143,11 +147,12 @@ fn evaluate_population(
     ctx: &mut Context<Scalar2DGenome, RegressionFitness>,
     inputs: &ArrayView2<Scalar>,
     targets: &ArrayView1<Scalar>,
+    stack: &mut EvalBufferStack,
 ) {
     let arena = &ctx.current.arena;
-    let eval = ExprEvalContext::new(arena, &ctx.operations);
+    let eval = VectorizedEvalContext::new(arena, &ctx.operations);
     ctx.current.population.score_unscored(|ind| {
-        let raw = mse(ind, &eval, *inputs, targets.view());
+        let raw = mse(ind, &eval, *inputs, targets.view(), stack);
         let accuracy = if raw < MSE_TARGET { 0.0 } else { raw };
         RegressionFitness {
             mse: accuracy.into(),
@@ -194,7 +199,7 @@ fn make_params_array(params: &[Scalar], batch: usize) -> Array2<Scalar> {
 
 fn main() {
     // Training data: 20 points, x ∈ [−5, 5], y ∈ [−4, 4], target = 2x² + 4y + 3.
-    const N: usize = 50;
+    const N: usize = 64;
     let xs: Vec<Scalar> = (0..N)
         .map(|i| -5.0 + 10.0 * i as f32 / (N - 1) as f32)
         .collect();
@@ -206,6 +211,10 @@ fn main() {
         .collect();
     let inputs = Array2::from_shape_fn((N, 2), |(i, j)| if j == 0 { xs[i] } else { ys[i] });
     let targets = Array1::from_vec(targets);
+
+    // Scratch buffers for the vectorized evaluator, reused across every
+    // individual and every generation (all training batches are size N).
+    let mut stack = EvalBufferStack::new(N);
 
     let tree_cfg = TreeGenConfig {
         p_terminal: 0.3,
@@ -259,33 +268,34 @@ fn main() {
     println!("pop={POP_SIZE}  gens={GEN_COUNT}  tournament k={K}\n");
 
     for generation in 0..GEN_COUNT {
-        evaluate_population(&mut gp_context, &inputs.view(), &targets.view());
-
-        // lets find the best individual of current population. Node count and
-        // depth come straight from the (unsnapped) fitness vector; the MSE
-        // objective is snapped once solved, so recompute the true MSE here for
-        // reporting and the convergence check.
+        evaluate_population(&mut gp_context, &inputs.view(), &targets.view(), &mut stack);
         let best = k_best_of(&gp_context.current.population, 1)
             .into_iter()
             .next()
             .unwrap();
+
+        let best_root_node_id = gp_context
+            .current
+            .arena
+            .get_root(best.individual.root)
+            .expect("no individual with mathing root id");
+
         let best_fitness = best.fitness.unwrap_or(RegressionFitness::WORST);
-        let raw_mse = {
-            let arena = &gp_context.current.arena;
-            let eval = ExprEvalContext::new(arena, &gp_context.operations);
-            mse(&best.individual, &eval, inputs.view(), targets.view())
-        };
 
-        if generation % 10 == 0 || raw_mse < EPSILON {
+        if generation % 10 == 0 {
             println!(
-                "gen {:3}: MSE={:.4e}  nodes={}  depth={}",
-                generation, raw_mse, best_fitness.nodes.0, best_fitness.depth.0,
+                "gen {:3}: MSE={:.4e}  nodes={}  depth={} | expression={}",
+                generation,
+                best_fitness.mse.0,
+                best_fitness.nodes.0,
+                best_fitness.depth.0,
+                fmt_node(
+                    best_root_node_id,
+                    &gp_context.current.arena,
+                    &best.individual.parameters,
+                    &gp_context.operations
+                )
             );
-        }
-
-        if raw_mse < EPSILON {
-            println!("\nConverged at generation {generation}.");
-            break;
         }
 
         // Build the next generation, then advance. `Breeding::new` takes the
@@ -310,7 +320,7 @@ fn main() {
 
     // The last generation produced by the loop is unscored after the final
     // advance; score it before reporting the overall best.
-    evaluate_population(&mut gp_context, &inputs.view(), &targets.view());
+    evaluate_population(&mut gp_context, &inputs.view(), &targets.view(), &mut stack);
     let best = k_best_of(&gp_context.current.population, 1)
         .into_iter()
         .next()
@@ -320,8 +330,14 @@ fn main() {
     let root_node = arena.get_root(best.individual.root).unwrap();
     let n_nodes = arena.iter_expr_nodes(root_node).count();
     let depth = tree_depth(best.individual.root, arena);
-    let eval = ExprEvalContext::new(arena, &gp_context.operations);
-    let raw_mse = mse(&best.individual, &eval, inputs.view(), targets.view());
+    let eval = VectorizedEvalContext::new(arena, &gp_context.operations);
+    let raw_mse = mse(
+        &best.individual,
+        &eval,
+        inputs.view(),
+        targets.view(),
+        &mut stack,
+    );
     println!(
         "\nBest individual: MSE={raw_mse:.4e}  depth={depth}  nodes={n_nodes}  params={:.4?}",
         best.individual.parameters
@@ -351,7 +367,15 @@ fn main() {
             },
         );
     let params_arr = make_params_array(&best.individual.parameters, 5);
-    let preds = eval.eval_batch(root_node, test_inputs.view(), params_arr.view());
+    // Different batch size (5 test points vs. N training points) needs its
+    // own stack;
+    let mut test_stack = EvalBufferStack::new(5);
+    let preds_buf = eval.eval_batch(
+        root_node,
+        test_inputs.view(),
+        params_arr.view(),
+        &mut test_stack,
+    );
 
     println!("\nTest predictions (target = 2x² + 4y + 3):");
     println!(
@@ -365,8 +389,9 @@ fn main() {
             x,
             y,
             t,
-            preds[i],
-            preds[i] - t
+            preds_buf[i],
+            preds_buf[i] - t
         );
     }
+    test_stack.reclaim(preds_buf);
 }

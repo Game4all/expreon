@@ -4,13 +4,19 @@ use crate::ast::{ExprArena, NodeKind};
 use crate::ops::OperationTable;
 use crate::types::{NodeId, Scalar};
 
-/// Evaluation context for expressions
-pub struct ExprEvalContext<'a, 'b, Tag: Clone> {
+/// An evaluation context for expressions.
+///
+/// Evaluates expressions eagerly on a per input-basis, allocating an array for each node.
+///
+/// ## Note
+/// - If you need to evaluate lots of expressions on thousands of data points you may
+/// want to use the vectorized expression evaluation context instead.
+pub struct EagerEvalContext<'a, 'b, Tag: Clone> {
     pub arena: &'a ExprArena<Tag>,
     pub ops: &'b OperationTable,
 }
 
-impl<'a, 'b, Tag: Clone> ExprEvalContext<'a, 'b, Tag> {
+impl<'a, 'b, Tag: Clone> EagerEvalContext<'a, 'b, Tag> {
     pub const fn new(arena: &'a ExprArena<Tag>, ops: &'b OperationTable) -> Self {
         Self { arena, ops }
     }
@@ -103,7 +109,7 @@ mod tests {
     use ndarray::{arr1, arr2};
 
     use crate::ast::{ExprArena, ExprNode};
-    use crate::eval::ExprEvalContext;
+    use crate::eval::EagerEvalContext;
     use crate::ops::{Arity, Operation, OperationTableBuilder};
     use crate::types::{OperationId, ParameterId, Scalar, VariableId};
 
@@ -140,7 +146,7 @@ mod tests {
         let ops = build_ops_test_table();
 
         let p = arena.add(ExprNode::new_parameter(ParameterId::from(1), ()));
-        let ctx = ExprEvalContext::new(&arena, &ops);
+        let ctx = EagerEvalContext::new(&arena, &ops);
 
         assert_eq!(
             ctx.eval(p, arr1(&[]).view(), arr1(&[10.0, 42.0]).view()),
@@ -154,7 +160,7 @@ mod tests {
         let ops = build_ops_test_table();
 
         let v = arena.add(ExprNode::new_variable(VariableId::from(0), ()));
-        let ctx = ExprEvalContext::new(&arena, &ops);
+        let ctx = EagerEvalContext::new(&arena, &ops);
         assert_eq!(ctx.eval(v, arr1(&[7.0]).view(), arr1(&[]).view()), 7.0);
     }
 
@@ -167,7 +173,7 @@ mod tests {
         let b = arena.add(ExprNode::new_parameter(ParameterId::from(1), ()));
         let add = arena.add(ExprNode::new_binary(a, b, OperationId::from(0), ()));
 
-        let ctx = ExprEvalContext::new(&arena, &ops);
+        let ctx = EagerEvalContext::new(&arena, &ops);
 
         assert_eq!(
             ctx.eval(add, arr1(&[]).view(), arr1(&[3.0, 4.0]).view()),
@@ -182,7 +188,7 @@ mod tests {
         let neg = arena.add(ExprNode::new_unary(v, OperationId::from(1), ()));
 
         let ops = build_ops_test_table();
-        let ctx = ExprEvalContext::new(&arena, &ops);
+        let ctx = EagerEvalContext::new(&arena, &ops);
         assert_eq!(ctx.eval(neg, arr1(&[5.0]).view(), arr1(&[]).view()), -5.0);
     }
 
@@ -199,7 +205,7 @@ mod tests {
             arena.add(ExprNode::new_binary(acc, v, OperationId::from(0), ()))
         });
 
-        let ctx = ExprEvalContext::new(&arena, &ops);
+        let ctx = EagerEvalContext::new(&arena, &ops);
         assert_eq!(
             ctx.eval(
                 sum,
@@ -216,7 +222,7 @@ mod tests {
         let ops = build_ops_test_table();
 
         let v = arena.add(ExprNode::new_variable(VariableId::from(1), ()));
-        let ctx = ExprEvalContext::new(&arena, &ops);
+        let ctx = EagerEvalContext::new(&arena, &ops);
 
         // 3 samples, 2 variables each; we read variable index 1
         let inputs = arr2(&[[1.0, 10.0], [2.0, 20.0], [3.0, 30.0]]);
@@ -232,7 +238,7 @@ mod tests {
         let ops = build_ops_test_table();
 
         let p = arena.add(ExprNode::new_parameter(ParameterId::from(0), ()));
-        let ctx = ExprEvalContext::new(&arena, &ops);
+        let ctx = EagerEvalContext::new(&arena, &ops);
 
         // 3 samples, each with its own parameter value
         let inputs = arr2(&[[], [], []]);
@@ -251,7 +257,7 @@ mod tests {
         let param = arena.add(ExprNode::new_parameter(ParameterId::from(0), ()));
         let add = arena.add(ExprNode::new_binary(var, param, OperationId::from(0), ()));
 
-        let ctx = ExprEvalContext::new(&arena, &ops);
+        let ctx = EagerEvalContext::new(&arena, &ops);
 
         // 3 samples: var=1,2,3 + param=10,20,30 → 11,22,33
         let inputs = arr2(&[[1.0], [2.0], [3.0]]);

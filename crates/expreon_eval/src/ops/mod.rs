@@ -1,5 +1,7 @@
 use std::collections::{HashMap, hash_map::Entry as HashMapEntry};
 
+use ndarray::{ArrayView1, ArrayViewMut1};
+
 pub mod builtin;
 
 use crate::types::{OperationId, Scalar};
@@ -16,8 +18,27 @@ pub trait Operation: 'static {
     const ID: &'static str;
     const ARITY: Arity;
 
-    /// Evaluates the given inputs with the current operation
+    /// Evaluates the given inputs with the current operation.
+    /// Input arity is at most `Binary` (2 args).
     fn forward(input: &[Scalar]) -> Scalar;
+
+    /// Evaluates a whole batch at once, writing one result per element into
+    /// `out`. `inputs` holds one column view per operand (length == arity);
+    /// every input view and `out` share the same length (the batch size).
+    ///
+    /// The default implementation calls [`Self::forward`] per element;
+    /// override this for a vectorized/SIMD kernel.
+    /// Input arity is at most `Binary` (2 args).
+    fn vectorized_forward(inputs: &[ArrayView1<Scalar>], mut out: ArrayViewMut1<Scalar>) {
+        let arity = inputs.len();
+        for i in 0..out.len() {
+            let mut args = [0.0 as Scalar; 2];
+            for a in 0..arity {
+                args[a] = inputs[a][i];
+            }
+            out[i] = Self::forward(&args[..arity]);
+        }
+    }
 }
 
 /// Metadata about an operation
@@ -31,6 +52,8 @@ pub struct OpMetadata {
 
     /// Pointer to the forward pass implementation of the operation
     forward_pass: fn(&[Scalar]) -> Scalar,
+    /// Pointer to the vectorized forward pass implementation of the operation
+    vectorized_forward_pass: fn(&[ArrayView1<Scalar>], ArrayViewMut1<Scalar>),
 }
 
 /// Builder struct to register all operation and operation sets
@@ -77,6 +100,7 @@ impl OperationTableBuilder {
             id: Op::ID,
             arity: Op::ARITY,
             forward_pass: Op::forward,
+            vectorized_forward_pass: Op::vectorized_forward,
         });
     }
 
@@ -132,6 +156,12 @@ impl OpMetadata {
     /// Executes the operation forward pass.
     pub fn call(&self, args: &[Scalar]) -> Scalar {
         (self.forward_pass)(args)
+    }
+
+    /// Executes the operation's vectorized forward pass, writing one result
+    /// per element into `out`.
+    pub fn call_vectorized(&self, inputs: &[ArrayView1<Scalar>], out: ArrayViewMut1<Scalar>) {
+        (self.vectorized_forward_pass)(inputs, out)
     }
 }
 
@@ -194,5 +224,27 @@ mod tests {
             builder.lookup.entry("test_add"),
             Entry::Occupied(_)
         ));
+    }
+
+    #[test]
+    fn forward_vectorized_default_matches_forward_elementwise() {
+        use ndarray::{Array1, arr1};
+
+        let mut b = OperationTableBuilder::new();
+        b.register::<TestAdd>();
+        let table = b.build();
+
+        let meta = table.lookup::<TestAdd>().unwrap();
+
+        let lhs = arr1(&[1.0, 2.0, 3.0]);
+        let rhs = arr1(&[10.0, 20.0, 30.0]);
+        let mut out = Array1::zeros(3);
+
+        meta.call_vectorized(&[lhs.view(), rhs.view()], out.view_mut());
+
+        assert_eq!(out, arr1(&[11.0, 22.0, 33.0]));
+        for i in 0..3 {
+            assert_eq!(out[i], meta.call(&[lhs[i], rhs[i]]));
+        }
     }
 }

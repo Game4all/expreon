@@ -6,13 +6,20 @@ pub mod ops {
     };
 }
 
+pub mod eval {
+    pub use expreon_eval::{
+        eval::EagerEvalContext,
+        vectorized::{Buffer, EvalBufferStack, VectorizedEvalContext},
+    };
+}
+
 pub mod prelude {
     pub use expreon_ast::{
         ExprArena, ExprNode, ExprNodeIter, NodeId, NodeKind, OperationId, ParameterId, RootId,
         Scalar, VariableId,
     };
     pub use expreon_eval::{
-        eval::ExprEvalContext,
+        eval::EagerEvalContext,
         ops::{Arity, Operation, OperationSet, OperationTable, OperationTableBuilder},
     };
 }
