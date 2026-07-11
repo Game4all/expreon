@@ -21,8 +21,8 @@ use expreon::{
         mutation::{
             Mutator,
             builtin::{
-                HoistMutation, InsertMutation, ParamJitter, PointMutation, SubtreeMutation,
-                TerminalMutation,
+                HoistMutation, InsertMutation, ParamJitter, ParamResample, PointMutation,
+                SubtreeMutation, TerminalTypeSwap,
             },
         },
         subtree::{GrowSubtreeConfig, TreeGenConfig, TreeMethod, gen_tree},
@@ -199,7 +199,7 @@ fn make_params_array(params: &[Scalar], batch: usize) -> Array2<Scalar> {
 
 fn main() {
     // Training data: 20 points, x ∈ [−5, 5], y ∈ [−4, 4], target = 2x² + 4y + 3.
-    const N: usize = 64;
+    const N: usize = 128;
     let xs: Vec<Scalar> = (0..N)
         .map(|i| -5.0 + 10.0 * i as f32 / (N - 1) as f32)
         .collect();
@@ -249,10 +249,15 @@ fn main() {
             },
         )
         .add(
-            0.2,
-            TerminalMutation {
+            0.1,
+            TerminalTypeSwap {
                 const_range: (-5.0, 5.0),
-                p_variable: 0.5,
+            },
+        )
+        .add(
+            0.1,
+            ParamResample {
+                const_range: (-5.0, 5.0),
             },
         );
 

@@ -221,24 +221,26 @@ impl<G: Genome> Mutation<G> for InsertMutation {
 }
 
 // ---------------------------------------------------------------------------
-// TerminalMutation — mutate a leaf (variable/constant)
+// TerminalTypeSwap — toggle a leaf between variable and parameter
 // ---------------------------------------------------------------------------
 
-/// Mutates a leaf node. A variable is swapped for another variable or replaced
-/// by a fresh constant; a parameter is either re-initialised to a fresh random
-/// value (structure unchanged) or replaced by a variable. When the genome has no
-/// input variables (`INPUT_DIM == 0`), only constant behaviour is used.
-pub struct TerminalMutation {
-    /// Range [lo, hi) for fresh constant values.
+/// Swaps a leaf's *type*: a `Variable` becomes a fresh `Parameter`, and a
+/// `Parameter` becomes a `Variable`. Direction is determined entirely by the
+/// target's current kind. Swapping a parameter to a variable requires the
+/// genome to have input variables (`INPUT_DIM > 0`).
+pub struct TerminalTypeSwap {
+    /// Range [lo, hi) for the fresh constant value used when a variable is
+    /// swapped for a parameter.
     pub const_range: (Scalar, Scalar),
-    /// Probability in [0, 1] of routing the leaf to a variable (vs. a constant).
-    /// Forced to 0 when the genome has no input variables (`INPUT_DIM == 0`).
-    pub p_variable: f32,
 }
 
-impl<G: Genome> Mutation<G> for TerminalMutation {
+impl<G: Genome> Mutation<G> for TerminalTypeSwap {
     fn applies_to(&self, kind: NodeKind) -> bool {
-        matches!(kind, NodeKind::Variable(_) | NodeKind::Parameter(_))
+        match kind {
+            NodeKind::Variable(_) => true,
+            NodeKind::Parameter(_) => G::INPUT_DIM > 0,
+            _ => false,
+        }
     }
 
     fn apply(
@@ -247,39 +249,95 @@ impl<G: Genome> Mutation<G> for TerminalMutation {
         node: &ExprNode<G::Tag>,
         ctx: &mut MutationContext<'_, G>,
     ) -> Option<NodeId> {
-        // Whether to (re)route this leaf to a variable. Always false when the
-        // genome has no inputs, so `pick_variable` is never called unsafely.
-        let to_variable = G::INPUT_DIM > 0 && ctx.rng().random::<f32>() < self.p_variable;
-
         match node.kind {
             NodeKind::Variable(_) => {
-                if to_variable {
-                    let var = ctx.pick_variable();
-                    let kind = NodeKind::Variable(var);
-                    Some(ctx.emit(ExprNode::new(kind, G::get_tag_for_node(kind))))
-                } else {
-                    let (lo, hi) = self.const_range;
-                    let value: Scalar = ctx.rng().random_range(lo..hi);
-                    let pid = ctx.new_parameter(value);
-                    let kind = NodeKind::Parameter(pid);
-                    Some(ctx.emit(ExprNode::new(kind, G::get_tag_for_node(kind))))
-                }
+                let (lo, hi) = self.const_range;
+                let value: Scalar = ctx.rng().random_range(lo..hi);
+                let pid = ctx.new_parameter(value);
+                let kind = NodeKind::Parameter(pid);
+                Some(ctx.emit(ExprNode::new(kind, G::get_tag_for_node(kind))))
             }
-            NodeKind::Parameter(pid) => {
-                if to_variable {
-                    let var = ctx.pick_variable();
-                    let kind = NodeKind::Variable(var);
-                    Some(ctx.emit(ExprNode::new(kind, G::get_tag_for_node(kind))))
-                } else {
-                    // Re-initialise in place: only the parameter vector changes.
-                    let (lo, hi) = self.const_range;
-                    let value: Scalar = ctx.rng().random_range(lo..hi);
-                    ctx.set_parameter(pid, value);
-                    None
-                }
+            NodeKind::Parameter(_) => {
+                let var = ctx.pick_variable();
+                let kind = NodeKind::Variable(var);
+                Some(ctx.emit(ExprNode::new(kind, G::get_tag_for_node(kind))))
             }
             _ => unreachable!("guarded by applies_to"),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VariableReindex — re-point a variable leaf at a different input
+// ---------------------------------------------------------------------------
+
+/// Re-points a `Variable` leaf at a different input variable id. Only applies
+/// when the genome has more than one input (`INPUT_DIM > 1`), since with one
+/// or zero inputs there is no other variable to switch to.
+pub struct VariableReindex;
+
+impl<G: Genome> Mutation<G> for VariableReindex {
+    fn applies_to(&self, kind: NodeKind) -> bool {
+        matches!(kind, NodeKind::Variable(_)) && G::INPUT_DIM > 1
+    }
+
+    fn apply(
+        &self,
+        _target: NodeId,
+        node: &ExprNode<G::Tag>,
+        ctx: &mut MutationContext<'_, G>,
+    ) -> Option<NodeId> {
+        let NodeKind::Variable(current) = node.kind else {
+            unreachable!("guarded by applies_to");
+        };
+
+        let var = loop {
+            let candidate = ctx.pick_variable();
+            if candidate != current {
+                break candidate;
+            }
+        };
+
+        let kind = NodeKind::Variable(var);
+        Some(ctx.emit(ExprNode::new(kind, G::get_tag_for_node(kind))))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ParamResample — draw a fresh value for a parameter
+// ---------------------------------------------------------------------------
+
+/// Re-initialises a `Parameter` leaf to a fresh uniform value in
+/// `const_range`. The tree structure is unchanged; only the offspring
+/// parameter vector is modified. Unlike [`ParamJitter`], which perturbs the
+/// existing value, this discards it entirely.
+pub struct ParamResample {
+    /// Range [lo, hi) for the fresh constant value.
+    pub const_range: (Scalar, Scalar),
+}
+
+impl<G: Genome> Mutation<G> for ParamResample {
+    fn applies_to(&self, kind: NodeKind) -> bool {
+        matches!(kind, NodeKind::Parameter(_))
+    }
+
+    fn apply(
+        &self,
+        _target: NodeId,
+        node: &ExprNode<G::Tag>,
+        ctx: &mut MutationContext<'_, G>,
+    ) -> Option<NodeId> {
+        let NodeKind::Parameter(pid) = node.kind else {
+            unreachable!("guarded by applies_to");
+        };
+
+        let (lo, hi) = self.const_range;
+        let value: Scalar = ctx.rng().random_range(lo..hi);
+        ctx.set_parameter(pid, value);
+
+        // Passthrough: only the parameter vector changed. The engine copies the
+        // original parameter node verbatim.
+        None
     }
 }
 
@@ -300,8 +358,8 @@ mod tests {
         mutation::{
             apply_mutation,
             builtin::{
-                HoistMutation, InsertMutation, ParamJitter, PointMutation, SubtreeMutation,
-                TerminalMutation,
+                HoistMutation, InsertMutation, ParamJitter, ParamResample, PointMutation,
+                SubtreeMutation, TerminalTypeSwap, VariableReindex,
             },
         },
         subtree::{GrowSubtreeConfig, TreeGenConfig},
@@ -320,6 +378,16 @@ mod tests {
         let add = arena.add(ExprNode::new_binary(p0, p1, OperationId::from(0u16), ()));
         let root = arena.add_root(add);
         (root, vec![1.0, 2.0])
+    }
+
+    /// A param + variable(0) tree, for exercising terminal-swap/reindex mutations.
+    fn build_param_variable_tree(arena: &mut ExprArena<()>) -> (RootId, Vec<Scalar>) {
+        use expreon_ast::VariableId;
+        let p0 = arena.add(ExprNode::new_parameter(ParameterId::from(0u16), ()));
+        let v0 = arena.add(ExprNode::new_variable(VariableId::from(0u16), ()));
+        let add = arena.add(ExprNode::new_binary(p0, v0, OperationId::from(0u16), ()));
+        let root = arena.add_root(add);
+        (root, vec![1.0])
     }
 
     // ---------------------------------------------------------------------------
@@ -587,10 +655,10 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // TerminalMutation — replaces a leaf; node count is preserved
+    // TerminalTypeSwap — Parameter -> Variable
     // -----------------------------------------------------------------------
     #[test]
-    fn terminal_mutation_preserves_node_count() {
+    fn terminal_type_swap_param_to_variable() {
         let ops = base_ops();
         let mut src: ExprArena<()> = ExprArena::new();
         let mut dest: ExprArena<()> = ExprArena::new();
@@ -607,9 +675,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(13);
 
         let offspring = apply_mutation(
-            &TerminalMutation {
+            &TerminalTypeSwap {
                 const_range: (-1.0, 1.0),
-                p_variable: 0.5,
             },
             target,
             &parent,
@@ -626,8 +693,168 @@ mod tests {
         let dest_count = dest.iter_expr_nodes(offspring_root).count();
         assert_eq!(
             src_count, dest_count,
-            "terminal mutation must not change node count"
+            "type swap must not change node count"
         );
+        let has_variable = dest
+            .iter_expr_nodes(offspring_root)
+            .any(|(_, n)| matches!(n.kind, NodeKind::Variable(_)));
+        assert!(has_variable, "swapped parameter should become a variable");
+        eval_ok(&dest, &ops, &offspring);
+    }
+
+    // -----------------------------------------------------------------------
+    // TerminalTypeSwap — Variable -> Parameter
+    // -----------------------------------------------------------------------
+    #[test]
+    fn terminal_type_swap_variable_to_param() {
+        let ops = base_ops();
+        let mut src: ExprArena<()> = ExprArena::new();
+        let mut dest: ExprArena<()> = ExprArena::new();
+        let (root, params) = build_param_variable_tree(&mut src);
+
+        let root_node = src.get_root(root).unwrap();
+        let target = src
+            .iter_expr_nodes(root_node)
+            .find(|(_, n)| matches!(n.kind, NodeKind::Variable(_)))
+            .map(|(id, _)| id)
+            .unwrap();
+
+        let parent = Individual::<TestSimpleGenome>::new(root, params);
+        let mut rng = StdRng::seed_from_u64(17);
+
+        let offspring = apply_mutation(
+            &TerminalTypeSwap {
+                const_range: (-1.0, 1.0),
+            },
+            target,
+            &parent,
+            &src,
+            &mut dest,
+            &ops,
+            &mut rng,
+        )
+        .unwrap();
+
+        let parent_root = src.get_root(parent.root).unwrap();
+        let offspring_root = dest.get_root(offspring.root).unwrap();
+        let src_count = src.iter_expr_nodes(parent_root).count();
+        let dest_count = dest.iter_expr_nodes(offspring_root).count();
+        assert_eq!(
+            src_count, dest_count,
+            "type swap must not change node count"
+        );
+        let variable_count = dest
+            .iter_expr_nodes(offspring_root)
+            .filter(|(_, n)| matches!(n.kind, NodeKind::Variable(_)))
+            .count();
+        assert_eq!(
+            variable_count, 0,
+            "swapped variable should become a parameter"
+        );
+        eval_ok(&dest, &ops, &offspring);
+    }
+
+    // -----------------------------------------------------------------------
+    // VariableReindex — always picks a different variable id
+    // -----------------------------------------------------------------------
+    #[test]
+    fn variable_reindex_picks_different_id() {
+        let ops = base_ops();
+        let mut src: ExprArena<()> = ExprArena::new();
+        let mut dest: ExprArena<()> = ExprArena::new();
+        let (root, params) = build_param_variable_tree(&mut src);
+
+        let root_node = src.get_root(root).unwrap();
+        let target = src
+            .iter_expr_nodes(root_node)
+            .find_map(|(id, n)| match n.kind {
+                NodeKind::Variable(vid) => Some((id, vid)),
+                _ => None,
+            })
+            .unwrap();
+        let (target, original_vid) = target;
+
+        let parent = Individual::<TestSimpleGenome>::new(root, params);
+        let mut rng = StdRng::seed_from_u64(23);
+
+        let offspring = apply_mutation(
+            &VariableReindex,
+            target,
+            &parent,
+            &src,
+            &mut dest,
+            &ops,
+            &mut rng,
+        )
+        .unwrap();
+
+        let parent_root = src.get_root(parent.root).unwrap();
+        let offspring_root = dest.get_root(offspring.root).unwrap();
+        let src_count = src.iter_expr_nodes(parent_root).count();
+        let dest_count = dest.iter_expr_nodes(offspring_root).count();
+        assert_eq!(src_count, dest_count, "reindex must not change node count");
+
+        let new_vid = dest
+            .iter_expr_nodes(offspring_root)
+            .find_map(|(_, n)| match n.kind {
+                NodeKind::Variable(vid) => Some(vid),
+                _ => None,
+            })
+            .unwrap();
+        assert_ne!(
+            new_vid, original_vid,
+            "reindex must pick a different variable id"
+        );
+        eval_ok(&dest, &ops, &offspring);
+    }
+
+    // -----------------------------------------------------------------------
+    // ParamResample — changes exactly one parameter's value, in place
+    // -----------------------------------------------------------------------
+    #[test]
+    fn param_resample_changes_exactly_one_param() {
+        let ops = base_ops();
+        let mut src: ExprArena<()> = ExprArena::new();
+        let mut dest: ExprArena<()> = ExprArena::new();
+        let (root, params) = build_two_param_tree(&mut src);
+        let original_params = params.clone();
+
+        let root_node = src.get_root(root).unwrap();
+        let target = src
+            .iter_expr_nodes(root_node)
+            .find(|(_, n)| matches!(n.kind, NodeKind::Parameter(_)))
+            .map(|(id, _)| id)
+            .unwrap();
+
+        let parent = Individual::<TestSimpleGenome>::new(root, params);
+        let mut rng = StdRng::seed_from_u64(29);
+
+        let offspring = apply_mutation(
+            &ParamResample {
+                const_range: (-1.0, 1.0),
+            },
+            target,
+            &parent,
+            &src,
+            &mut dest,
+            &ops,
+            &mut rng,
+        )
+        .unwrap();
+
+        let parent_root = src.get_root(parent.root).unwrap();
+        let offspring_root = dest.get_root(offspring.root).unwrap();
+        let src_count = src.iter_expr_nodes(parent_root).count();
+        let dest_count = dest.iter_expr_nodes(offspring_root).count();
+        assert_eq!(src_count, dest_count, "resample must not change node count");
+
+        let changed = offspring
+            .parameters
+            .iter()
+            .zip(&original_params)
+            .filter(|(a, b)| (*a - *b).abs() > 1e-9)
+            .count();
+        assert_eq!(changed, 1);
         eval_ok(&dest, &ops, &offspring);
     }
 }
