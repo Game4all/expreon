@@ -2,7 +2,6 @@ use rand::RngCore;
 
 use expreon_eval::ops::OperationTable;
 
-use crate::gp::mutation::Mutator;
 use crate::gp::{Fitness, Generation, Genome, Individual, IndividualBuilder, Scored};
 
 /// Split-borrow view used to populate the next generation.
@@ -56,32 +55,6 @@ impl<'a, G: Genome, F: Fitness> GenerationBreeder<'a, G, F> {
             self.ops,
             rng,
         )
-    }
-}
-
-// `Mutator` boxes its mutations (`Box<dyn Mutation<G>>`), which requires `G: 'static`.
-impl<'a, G: Genome + 'static, F: Fitness> GenerationBreeder<'a, G, F> {
-    /// Breeds `parent` (from the source generation) via `mutator`, building
-    /// the offspring into the destination arena and inserting it (unscored)
-    /// into the destination population.
-    ///
-    /// Returns the new individual, or `None` if no registered mutation had a
-    /// valid target in the parent's tree.
-    pub fn breed(
-        &mut self,
-        parent: &Scored<G, F>,
-        mutator: &Mutator<G>,
-        rng: &mut dyn RngCore,
-    ) -> Option<&mut Scored<G, F>> {
-        let source = self.source;
-        let child = mutator.mutate(
-            &parent.individual,
-            &source.arena,
-            &mut self.dest.arena,
-            self.ops,
-            rng,
-        )?;
-        Some(self.dest.population.insert(child))
     }
 }
 

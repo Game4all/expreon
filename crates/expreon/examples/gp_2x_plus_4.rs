@@ -316,7 +316,7 @@ fn main() {
             breeding.copy_individual_over(best);
             for _ in 1..POP_SIZE {
                 let parent = k_tournament_selection(&breeding.source.population, K, &mut rng);
-                breeding.breed(parent, &mutator, &mut rng);
+                mutator.breed(&mut breeding, parent, &mut rng);
             }
         }
 

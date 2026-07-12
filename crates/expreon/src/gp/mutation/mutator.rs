@@ -3,7 +3,7 @@ use rand::{Rng, RngCore};
 use expreon_ast::{ExprArena, NodeId};
 use expreon_eval::ops::OperationTable;
 
-use crate::gp::{Genome, Individual};
+use crate::gp::{Fitness, GenerationBreeder, Genome, Individual, Scored};
 
 use super::Mutation;
 
@@ -92,6 +92,28 @@ impl<G: Genome + 'static> Mutator<G> {
         let target = targets[rng.random_range(0..targets.len())];
 
         super::apply_mutation(mutation, target, parent, source, dest, ops, rng)
+    }
+
+    /// Breeds `parent` (from the breeder's source generation) by applying one
+    /// mutation, building the offspring into the breeder's destination arena and
+    /// inserting it (unscored) into the destination population.
+    ///
+    /// Returns the new individual, or `None` if no registered mutation had a
+    /// valid target in the parent's tree.
+    pub fn breed<'b, F: Fitness>(
+        &self,
+        breeder: &'b mut GenerationBreeder<'_, G, F>,
+        parent: &Scored<G, F>,
+        rng: &mut dyn RngCore,
+    ) -> Option<&'b mut Scored<G, F>> {
+        let child = self.mutate(
+            &parent.individual,
+            &breeder.source.arena,
+            &mut breeder.dest.arena,
+            breeder.ops,
+            rng,
+        )?;
+        Some(breeder.dest.population.insert(child))
     }
 }
 
