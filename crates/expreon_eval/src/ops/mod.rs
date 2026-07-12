@@ -136,6 +136,13 @@ impl OperationTable {
         self.ops.get(operation_index as usize)
     }
 
+    // Looks up the operation ID for a registered operation.
+    pub fn get_id_for_op<Op: Operation>(&self) -> Option<OperationId> {
+        self.lookup
+            .get(Op::ID)
+            .map(|x| OperationId::from(*x as u16))
+    }
+
     /// Looks up operation metadata from an Operation itself
     pub fn lookup<Op: Operation>(&self) -> Option<&OpMetadata> {
         self.lookup.get(Op::ID).and_then(|x| self.ops.get(*x))
