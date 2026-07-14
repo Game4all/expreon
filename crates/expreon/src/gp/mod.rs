@@ -25,6 +25,7 @@ pub use population::{Population, Scored};
 ///
 /// A genome may expose an additional tag type used to control what parts can explicitly be modified by overriding [`Self::mutation_targets`]
 pub trait Genome: Clone {
+    /// Associated type for a Tag type. Used for tagging nodes of the expression for i.e filtering mutation targets.
     type Tag: Clone;
 
     /// Dimension of the input vector: the number of input variables available
@@ -103,6 +104,7 @@ pub struct Context<G: Genome, F: Fitness> {
     pub current: Generation<G, F>,
     pub next: Generation<G, F>,
     pub operations: OperationTable,
+    generation_index: usize,
 }
 
 /// A `NodeBuilder` returned by [`Context::builder`] for constructing a single
@@ -124,6 +126,7 @@ impl<G: Genome, F: Fitness> Context<G, F> {
             current: Generation::new(),
             next: Generation::new(),
             operations: op,
+            generation_index: 0,
         }
     }
 
@@ -132,6 +135,18 @@ impl<G: Genome, F: Fitness> Context<G, F> {
     pub fn advance(&mut self) {
         std::mem::swap(&mut self.current, &mut self.next);
         self.next.clear();
+        self.generation_index += 1;
+    }
+
+    /// Returns the generation index for the population in the context.
+    #[inline]
+    pub fn get_generation_index(&self) -> usize {
+        self.generation_index
+    }
+
+    /// Resets the generation index to zero.
+    pub fn reset_generational_index(&mut self) {
+        self.generation_index = 0;
     }
 
     /// Returns a [`GenerationBreeder`] view over `current` (read) and `next` (write) to
@@ -216,5 +231,52 @@ pub(crate) mod test_genome {
         const INPUT_DIM: u16 = 2;
 
         fn get_tag_for_node(_kind: NodeKind) -> () {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use expreon_eval::ops::OperationTableBuilder;
+
+    use crate::gp::test_genome::TestSimpleGenome;
+    use crate::gp::{Context, ScalarFitness};
+
+    fn new_ctx() -> Context<TestSimpleGenome, ScalarFitness> {
+        Context::new(OperationTableBuilder::new().build())
+    }
+
+    #[test]
+    fn new_context_starts_at_generation_zero() {
+        let ctx = new_ctx();
+        assert_eq!(ctx.get_generation_index(), 0);
+    }
+
+    #[test]
+    fn advance_increments_generation_index() {
+        let mut ctx = new_ctx();
+        ctx.advance();
+        assert_eq!(ctx.get_generation_index(), 1);
+    }
+
+    #[test]
+    fn advance_increments_across_multiple_generations() {
+        let mut ctx = new_ctx();
+        for _ in 0..5 {
+            ctx.advance();
+        }
+        assert_eq!(ctx.get_generation_index(), 5);
+    }
+
+    #[test]
+    fn reset_generational_index_resets_to_zero() {
+        let mut ctx = new_ctx();
+        for _ in 0..3 {
+            ctx.advance();
+        }
+        ctx.reset_generational_index();
+        assert_eq!(ctx.get_generation_index(), 0);
+
+        ctx.advance();
+        assert_eq!(ctx.get_generation_index(), 1);
     }
 }

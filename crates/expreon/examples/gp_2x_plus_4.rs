@@ -272,7 +272,7 @@ fn main() {
     println!("Target expression: 2x² + 4y + 3 (2-D input)");
     println!("pop={POP_SIZE}  gens={GEN_COUNT}  tournament k={K}\n");
 
-    for generation in 0..GEN_COUNT {
+    while gp_context.get_generation_index() < GEN_COUNT {
         evaluate_population(&mut gp_context, &inputs.view(), &targets.view(), &mut stack);
         let best = k_best_of(&gp_context.current.population, 1)
             .into_iter()
@@ -286,6 +286,7 @@ fn main() {
             .expect("no individual with mathing root id");
 
         let best_fitness = best.fitness.unwrap_or(RegressionFitness::WORST);
+        let generation = gp_context.get_generation_index();
 
         if generation % 10 == 0 {
             println!(
