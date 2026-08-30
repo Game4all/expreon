@@ -76,7 +76,7 @@ impl<G: Genome> Mutation<G> for SubtreeMutation {
         _node: &ExprNode<G::Tag>,
         ctx: &mut MutationContext<'_, G>,
     ) -> Option<NodeId> {
-        Some(gen_subtree(ctx, &self.grow, self.grow.max_depth))
+        Some(gen_subtree(ctx, &self.grow))
     }
 }
 
@@ -511,17 +511,7 @@ mod tests {
         let eval_ctx = EagerEvalContext::new(&dest, &ops);
 
         let inputs = array![[0.5f32, 1.0f32]];
-        let n_params = offspring.parameters.len();
-        let params_arr = ndarray::Array2::from_shape_vec((1, n_params.max(1)), {
-            let mut v = offspring.parameters.clone();
-            if n_params == 0 {
-                v.push(0.0);
-            }
-            v
-        })
-        .unwrap();
-
-        let _ = eval_ctx.eval_batch(root_node, inputs.view(), params_arr.view());
+        let _ = eval_ctx.eval_batch(root_node, inputs.view(), &offspring.parameters);
     }
 
     /// Evaluate an offspring once to confirm it is structurally valid (no panic).
@@ -536,16 +526,7 @@ mod tests {
         let root_node = dest.get_root(offspring.root).unwrap();
         let eval_ctx = EagerEvalContext::new(dest, ops);
         let inputs = array![[0.5f32, 1.0f32]];
-        let n_params = offspring.parameters.len();
-        let params_arr = ndarray::Array2::from_shape_vec((1, n_params.max(1)), {
-            let mut v = offspring.parameters.clone();
-            if n_params == 0 {
-                v.push(0.0);
-            }
-            v
-        })
-        .unwrap();
-        let _ = eval_ctx.eval_batch(root_node, inputs.view(), params_arr.view());
+        let _ = eval_ctx.eval_batch(root_node, inputs.view(), &offspring.parameters);
     }
 
     // -----------------------------------------------------------------------

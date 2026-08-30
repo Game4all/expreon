@@ -3,7 +3,7 @@ use rand::{Rng, RngCore};
 use expreon_ast::{ExprArena, NodeId};
 use expreon_eval::ops::OperationTable;
 
-use crate::gp::{Fitness, GenerationBreeder, Genome, Individual, Scored};
+use crate::gp::{Breeder, Fitness, Genome, Individual, Scored};
 
 use super::Mutation;
 
@@ -96,24 +96,24 @@ impl<G: Genome + 'static> Mutator<G> {
 
     /// Breeds `parent` (from the breeder's source generation) by applying one
     /// mutation, building the offspring into the breeder's destination arena and
-    /// inserting it (unscored) into the destination population.
+    /// offering it to the breeder for insertion (unscored) into the
+    /// destination population.
     ///
-    /// Returns the new individual, or `None` if no registered mutation had a
-    /// valid target in the parent's tree.
-    pub fn breed<'b, F: Fitness>(
+    /// Returns `None` if no registered mutation had a valid target in the
+    /// parent's tree, or if the breeder refused the finished offspring (e.g.
+    /// a [`crate::gp::GatedGenerationBreeder`]'s hook closure rejected it) —
+    /// the two cases aren't distinguished by the return value.
+    pub fn breed<'b, F: Fitness, B: Breeder<G, F> + ?Sized>(
         &self,
-        breeder: &'b mut GenerationBreeder<'_, G, F>,
+        breeder: &'b mut B,
         parent: &Scored<G, F>,
         rng: &mut dyn RngCore,
     ) -> Option<&'b mut Scored<G, F>> {
-        let child = self.mutate(
-            &parent.individual,
-            &breeder.source.arena,
-            &mut breeder.dest.arena,
-            breeder.ops,
-            rng,
-        )?;
-        Some(breeder.dest.population.insert(child))
+        let child = {
+            let parts = breeder.parts();
+            self.mutate(&parent.individual, parts.source, parts.dest, parts.ops, rng)?
+        };
+        breeder.commit(child)
     }
 }
 
@@ -129,8 +129,9 @@ mod tests {
     use expreon_ast::{ExprArena, ExprNode, NodeId, OperationId, ParameterId, RootId, Scalar};
     use expreon_eval::ops::{OperationTable, OperationTableBuilder, builtin::MathBaseOps};
 
+    use crate::gp::builder::NodeBuilder;
     use crate::gp::{
-        Individual,
+        Context, GatedGenerationBreeder, Individual, ScalarFitness,
         mutation::{Mutator, builtin::PointMutation},
         test_genome::TestSimpleGenome,
     };
@@ -174,5 +175,55 @@ mod tests {
         };
 
         assert_eq!(run(99), run(99));
+    }
+
+    // ---------------------------------------------------------------------------
+    // `breed` is generic over `Breeder` — a gated breeder can refuse a child
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn breed_respects_breeder_acceptance() {
+        let ops = base_ops();
+
+        let mut ctx: Context<TestSimpleGenome, ScalarFitness> = Context::new(ops);
+        let mut rng = StdRng::seed_from_u64(99);
+        {
+            let mut b = ctx.builder(&mut rng);
+            let pid0 = b.new_parameter(1.0);
+            let pid1 = b.new_parameter(2.0);
+            let n0 = b.emit(ExprNode::new_parameter(pid0, ()));
+            let n1 = b.emit(ExprNode::new_parameter(pid1, ()));
+            let add = b.emit(ExprNode::new_binary(n0, n1, OperationId::from(0u16), ()));
+            b.finish(add);
+        }
+
+        let mut mutator: Mutator<TestSimpleGenome> = Mutator::new();
+        mutator.add(1.0, PointMutation);
+        let parent = &ctx.current.population[0];
+
+        // An always-accepting gated breeder still produces a child.
+        {
+            let mut breeding = GatedGenerationBreeder::new(
+                &ctx.current,
+                &mut ctx.next,
+                &ctx.operations,
+                |_: &_, _: &_| true,
+            );
+            assert!(mutator.breed(&mut breeding, parent, &mut rng).is_some());
+        }
+        ctx.next.clear();
+
+        // An always-rejecting gated breeder never commits, even though
+        // `mutate` itself succeeds deterministically on this tree (the `add`
+        // node is PointMutation's only valid target).
+        {
+            let mut breeding = GatedGenerationBreeder::new(
+                &ctx.current,
+                &mut ctx.next,
+                &ctx.operations,
+                |_: &_, _: &_| false,
+            );
+            assert!(mutator.breed(&mut breeding, parent, &mut rng).is_none());
+        }
+        assert_eq!(ctx.next.population.len(), 0);
     }
 }

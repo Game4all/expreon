@@ -59,17 +59,21 @@ impl<'a, 'b, Tag: Clone> EagerEvalContext<'a, 'b, Tag> {
         }
     }
 
-    /// Evaluates the expression over a batch of inputs and parameters.
-    /// Returns one output per sample.
+    /// Evaluates the expression over a batch of inputs against one shared set
+    /// of parameters. Returns one output per sample.
     ///
     /// ## Notes
-    /// - `inputs` is expected to have shape `[batch_size, n_variables]`
-    /// - `parameters` is expected to have shape `[batch_size, n_parameters]`.
+    /// - `inputs` is expected to have shape `[batch_size, n_variables]`.
+    /// - `parameters` holds one scalar per parameter slot — the same values
+    ///   for every sample in the batch, as is the case for an individual's
+    ///   constants in symbolic regression. There is no per-sample variant of
+    ///   this method; call [`Self::eval`] in a loop if parameters must vary
+    ///   by sample.
     pub fn eval_batch(
         &self,
         node_id: NodeId,
         inputs: ArrayView2<Scalar>,
-        parameters: ArrayView2<Scalar>,
+        parameters: &[Scalar],
     ) -> Array1<Scalar> {
         let node = self
             .arena
@@ -86,7 +90,9 @@ impl<'a, 'b, Tag: Clone> EagerEvalContext<'a, 'b, Tag> {
                 );
                 inputs.column(idx).to_owned()
             }
-            NodeKind::Parameter(param_id) => parameters.column(*param_id as usize).to_owned(),
+            NodeKind::Parameter(param_id) => {
+                Array1::from_elem(inputs.nrows(), parameters[*param_id as usize])
+            }
             NodeKind::Unary { value, op } => {
                 let val = self.eval_batch(value, inputs, parameters);
                 let meta = self.ops.lookup_by_id(op).expect("op not found");
@@ -226,26 +232,25 @@ mod tests {
 
         // 3 samples, 2 variables each; we read variable index 1
         let inputs = arr2(&[[1.0, 10.0], [2.0, 20.0], [3.0, 30.0]]);
-        let params = arr2(&[[], [], []]);
-        let result = ctx.eval_batch(v, inputs.view(), params.view());
+        let result = ctx.eval_batch(v, inputs.view(), &[]);
 
         assert_eq!(result, arr1(&[10.0, 20.0, 30.0]));
     }
 
     #[test]
-    fn test_eval_batch_parameter() {
+    fn test_eval_batch_parameter_broadcasts_across_samples() {
         let mut arena: ExprArena<()> = ExprArena::new();
         let ops = build_ops_test_table();
 
         let p = arena.add(ExprNode::new_parameter(ParameterId::from(0), ()));
         let ctx = EagerEvalContext::new(&arena, &ops);
 
-        // 3 samples, each with its own parameter value
+        // 3 samples, no variables: the single parameter value is broadcast to
+        // every row.
         let inputs = arr2(&[[], [], []]);
-        let params = arr2(&[[5.0], [6.0], [7.0]]);
-        let result = ctx.eval_batch(p, inputs.view(), params.view());
+        let result = ctx.eval_batch(p, inputs.view(), &[5.0]);
 
-        assert_eq!(result, arr1(&[5.0, 6.0, 7.0]));
+        assert_eq!(result, arr1(&[5.0, 5.0, 5.0]));
     }
 
     #[test]
@@ -259,11 +264,10 @@ mod tests {
 
         let ctx = EagerEvalContext::new(&arena, &ops);
 
-        // 3 samples: var=1,2,3 + param=10,20,30 → 11,22,33
+        // 3 samples: var=1,2,3 + the broadcast param (10) → 11,12,13
         let inputs = arr2(&[[1.0], [2.0], [3.0]]);
-        let params = arr2(&[[10.0], [20.0], [30.0]]);
-        let result = ctx.eval_batch(add, inputs.view(), params.view());
+        let result = ctx.eval_batch(add, inputs.view(), &[10.0]);
 
-        assert_eq!(result, arr1(&[11.0, 22.0, 33.0]));
+        assert_eq!(result, arr1(&[11.0, 12.0, 13.0]));
     }
 }

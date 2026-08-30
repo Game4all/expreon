@@ -6,6 +6,7 @@ use super::{Genome, builder::NodeBuilder};
 
 /// Tuning parameters for the random tree generators, shared by the `grow` and
 /// `full` methods. Depth is supplied separately at the call site.
+#[derive(Clone, Copy, Debug)]
 pub struct TreeGenConfig {
     /// Probability of emitting a terminal at a non-zero depth (grow only).
     pub p_terminal: f32,
@@ -13,12 +14,33 @@ pub struct TreeGenConfig {
     pub const_range: (Scalar, Scalar),
 }
 
+impl Default for TreeGenConfig {
+    /// A starting point, not a tuned recommendation: 30% terminal probability,
+    /// constants drawn from `[-1.0, 1.0)`.
+    fn default() -> Self {
+        Self {
+            p_terminal: 0.3,
+            const_range: (-1.0, 1.0),
+        }
+    }
+}
+
 /// Configuration for the `grow`-method subtree generator used by mutation.
+#[derive(Clone, Copy, Debug)]
 pub struct GrowSubtreeConfig {
     /// Maximum tree depth (depth 0 = terminal only).
     pub max_depth: usize,
     /// Generator tuning shared with population initialization.
     pub tuning: TreeGenConfig,
+}
+
+impl Default for GrowSubtreeConfig {
+    fn default() -> Self {
+        Self {
+            max_depth: 3,
+            tuning: TreeGenConfig::default(),
+        }
+    }
 }
 
 /// The tree-construction strategy.
@@ -39,7 +61,7 @@ pub enum TreeMethod {
 /// or, at any non-zero depth, with probability `cfg.p_terminal`. Otherwise a
 /// unary or binary operator is chosen and its children are generated recursively
 /// at `depth - 1`.
-pub fn gen_tree<G: Genome, B: NodeBuilder<G>>(
+pub fn gen_tree<B: NodeBuilder>(
     b: &mut B,
     cfg: &TreeGenConfig,
     method: TreeMethod,
@@ -55,35 +77,28 @@ pub fn gen_tree<G: Genome, B: NodeBuilder<G>>(
     }
 }
 
-/// Generates a random subtree using the `grow` method. Retained as a thin
-/// wrapper over [`gen_tree`] for mutation call sites.
-pub fn gen_subtree<G: Genome, B: NodeBuilder<G>>(
-    b: &mut B,
-    cfg: &GrowSubtreeConfig,
-    depth: usize,
-) -> NodeId {
-    gen_tree(b, &cfg.tuning, TreeMethod::Grow, depth)
+/// Generates a random subtree using the `grow` method, up to `cfg.max_depth`.
+/// Retained as a thin wrapper over [`gen_tree`] for mutation call sites.
+pub fn gen_subtree<B: NodeBuilder>(b: &mut B, cfg: &GrowSubtreeConfig) -> NodeId {
+    gen_tree(b, &cfg.tuning, TreeMethod::Grow, cfg.max_depth)
 }
 
-pub(crate) fn emit_terminal<G: Genome, B: NodeBuilder<G>>(
-    b: &mut B,
-    cfg: &TreeGenConfig,
-) -> NodeId {
+pub(crate) fn emit_terminal<B: NodeBuilder>(b: &mut B, cfg: &TreeGenConfig) -> NodeId {
     // 50/50 between a variable and a new constant parameter.
-    if G::INPUT_DIM > 0 && b.rng().random::<bool>() {
+    if B::Genome::INPUT_DIM > 0 && b.rng().random::<bool>() {
         let var = b.pick_variable();
         let kind = NodeKind::Variable(var);
-        b.emit(ExprNode::new(kind, G::get_tag_for_node(kind)))
+        b.emit(ExprNode::new(kind, B::Genome::get_tag_for_node(kind)))
     } else {
         let (lo, hi) = cfg.const_range;
         let value: Scalar = b.rng().random_range(lo..hi);
         let param_id = b.new_parameter(value);
         let kind = NodeKind::Parameter(param_id);
-        b.emit(ExprNode::new(kind, G::get_tag_for_node(kind)))
+        b.emit(ExprNode::new(kind, B::Genome::get_tag_for_node(kind)))
     }
 }
 
-fn emit_operator<G: Genome, B: NodeBuilder<G>>(
+fn emit_operator<B: NodeBuilder>(
     b: &mut B,
     cfg: &TreeGenConfig,
     method: TreeMethod,
@@ -105,12 +120,12 @@ fn emit_operator<G: Genome, B: NodeBuilder<G>>(
         let left = gen_tree(b, cfg, method, depth - 1);
         let right = gen_tree(b, cfg, method, depth - 1);
         let kind = NodeKind::Binary { left, right, op };
-        b.emit(ExprNode::new(kind, G::get_tag_for_node(kind)))
+        b.emit(ExprNode::new(kind, B::Genome::get_tag_for_node(kind)))
     } else {
         let op = b.pick_random_unary_op();
         let value = gen_tree(b, cfg, method, depth - 1);
         let kind = NodeKind::Unary { value, op };
-        b.emit(ExprNode::new(kind, G::get_tag_for_node(kind)))
+        b.emit(ExprNode::new(kind, B::Genome::get_tag_for_node(kind)))
     }
 }
 
@@ -154,7 +169,7 @@ mod tests {
 
         let mut ctx =
             MutationContext::<TestSimpleGenome>::new(&src, &ops, &mut rng, &mut dest, &mut params);
-        let root_node = gen_subtree(&mut ctx, &cfg, cfg.max_depth);
+        let root_node = gen_subtree(&mut ctx, &cfg);
         drop(ctx);
 
         // Root node must be valid.
@@ -184,7 +199,7 @@ mod tests {
                 &mut dest,
                 &mut params,
             );
-            gen_subtree(&mut ctx, &cfg, cfg.max_depth)
+            gen_subtree(&mut ctx, &cfg)
         };
 
         let root_b = {
@@ -198,7 +213,7 @@ mod tests {
                 &mut dest,
                 &mut params,
             );
-            gen_subtree(&mut ctx, &cfg, cfg.max_depth)
+            gen_subtree(&mut ctx, &cfg)
         };
 
         assert_eq!(root_a, root_b);

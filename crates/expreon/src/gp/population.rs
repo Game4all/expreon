@@ -4,6 +4,7 @@ use crate::gp::{Fitness, Genome, Individual};
 
 /// An [`Individual`] together with its (optional) fitness, as stored in a
 /// [`Population`]. Fitness is `None` until scored.
+#[derive(Clone)]
 pub struct Scored<G: Genome, F: Fitness> {
     pub individual: Individual<G>,
     pub fitness: Option<F>,

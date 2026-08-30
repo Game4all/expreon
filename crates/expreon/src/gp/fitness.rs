@@ -120,7 +120,7 @@ impl<const N: usize> Fitness for ParetoFitness<N> {
 /// Each item is one criterion's [`Fitness::quality_cmp`] result. Returns
 /// `Some(Greater)`/`Some(Less)` when one side dominates (better-or-equal on
 /// every criterion, strictly better on at least one), `Some(Equal)` when equal
-/// on all, and `None` for a genuine trade-off, better on one, worse ou no-better on another
+/// on all, and `None` for a genuine trade-off, better on one, worse or no-better on another
 pub fn pareto_cmp(components: impl IntoIterator<Item = Option<Ordering>>) -> Option<Ordering> {
     let mut acc = Ordering::Equal;
     for cmp in components {
@@ -138,7 +138,7 @@ pub fn pareto_cmp(components: impl IntoIterator<Item = Option<Ordering>>) -> Opt
 /// Default comparator ranking [`Scored`] individuals by [`Fitness::quality_cmp`]:
 /// an unscored individual is worst, and a genuine trade-off (`None`) compares
 /// equal. Used by [`k_best_of`] and [`k_tournament_selection`]; pass a custom
-/// comparator to [`k_best_of_with_quality`] / [`k_tournament_selection_with_quality`]
+/// comparator to [`k_best_of_with_comparator`] / [`k_tournament_selection_with_comparator`]
 /// instead when trade-offs need a tie-break (e.g. a secondary objective).
 fn compare_by_fitness<G, F>(a: &Scored<G, F>, b: &Scored<G, F>) -> Ordering
 where
@@ -155,7 +155,7 @@ where
 
 /// Returns the `k` best individuals of `pop`, best first, ranked by
 /// [`Fitness::quality_cmp`] (unscored individuals are treated as worst; a
-/// genuine trade-off compares equal). See [`k_best_of_with_quality`] to
+/// genuine trade-off compares equal). See [`k_best_of_with_comparator`] to
 /// supply a custom comparator.
 #[inline(always)]
 pub fn k_best_of<G, F>(pop: &Population<G, F>, k: usize) -> Vec<&Scored<G, F>>
@@ -193,7 +193,7 @@ where
 /// from `pop` and returns a reference to the best, ranked by
 /// [`Fitness::quality_cmp`] (unscored individuals are treated as worst; a
 /// genuine trade-off compares equal). See
-/// [`k_tournament_selection_with_quality`] to supply a custom comparator.
+/// [`k_tournament_selection_with_comparator`] to supply a custom comparator.
 ///
 /// Panics if `pop` is empty.
 #[inline(always)]

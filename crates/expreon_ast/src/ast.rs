@@ -99,6 +99,38 @@ impl<Tag: Clone> ExprArena<Tag> {
             .map(move |id| (id, self.get_node(id).unwrap()))
     }
 
+    /// Depth of the subtree rooted at `node` (a leaf has depth 0). An invalid
+    /// `node` returns 0.
+    pub fn depth_of(&self, node: NodeId) -> usize {
+        let Some(n) = self.get_node(node) else {
+            return 0;
+        };
+        match n.kind {
+            NodeKind::Unary { value, .. } => 1 + self.depth_of(value),
+            NodeKind::Binary { left, right, .. } => {
+                1 + self.depth_of(left).max(self.depth_of(right))
+            }
+            NodeKind::Variable(_) | NodeKind::Parameter(_) => 0,
+        }
+    }
+
+    /// Depth of the expression registered under `root_id`, or 0 if the root id
+    /// is invalid. See [`Self::depth_of`].
+    pub fn depth_of_root(&self, root_id: RootId) -> usize {
+        self.get_root(root_id).map_or(0, |n| self.depth_of(n))
+    }
+
+    /// Total number of nodes in the subtree rooted at `node`.
+    pub fn node_count(&self, node: NodeId) -> usize {
+        self.walk_expr(node).count()
+    }
+
+    /// Total number of nodes in the expression registered under `root_id`, or
+    /// 0 if the root id is invalid. See [`Self::node_count`].
+    pub fn node_count_of_root(&self, root_id: RootId) -> usize {
+        self.get_root(root_id).map_or(0, |n| self.node_count(n))
+    }
+
     /// Recursively deep-copies the subtree rooted at `node` from `self` into
     /// `dest`, preserving each node's tag, and returns the new root `NodeId`
     /// within `dest`.
@@ -266,6 +298,91 @@ mod tests {
         let visited: Vec<_> = arena.walk_expr(add).collect();
 
         assert_eq!(visited, vec![add, mul, a, b, c]);
+    }
+
+    #[test]
+    fn depth_of_leaf_is_zero() {
+        let mut arena: ExprArena<()> = ExprArena::new();
+        let p = arena.add(ExprNode::new_parameter(ParameterId::from(0), ()));
+        assert_eq!(arena.depth_of(p), 0);
+    }
+
+    #[test]
+    fn depth_of_unary_is_one_plus_child() {
+        let mut arena: ExprArena<()> = ExprArena::new();
+        let child = arena.add(ExprNode::new_parameter(ParameterId::from(0), ()));
+        let parent = arena.add(ExprNode::new_unary(child, OperationId::from(0), ()));
+        assert_eq!(arena.depth_of(parent), 1);
+    }
+
+    #[test]
+    fn depth_of_binary_is_one_plus_deepest_child() {
+        let mut arena: ExprArena<()> = ExprArena::new();
+        // left is a leaf (depth 0), right is unary-over-leaf (depth 1).
+        let left = arena.add(ExprNode::new_parameter(ParameterId::from(0), ()));
+        let right_leaf = arena.add(ExprNode::new_parameter(ParameterId::from(1), ()));
+        let right = arena.add(ExprNode::new_unary(right_leaf, OperationId::from(0), ()));
+        let root_node = arena.add(ExprNode::new_binary(left, right, OperationId::from(1), ()));
+        assert_eq!(arena.depth_of(root_node), 2);
+    }
+
+    #[test]
+    fn depth_of_nested_expression() {
+        let mut arena = ExprArena::new();
+        let root_node = build_nested(&mut arena);
+        // (p0 * v2) + p1: mul is depth 1, add is depth 2.
+        assert_eq!(arena.depth_of(root_node), 2);
+    }
+
+    #[test]
+    fn depth_of_invalid_node_is_zero() {
+        let arena: ExprArena<()> = ExprArena::new();
+        assert_eq!(arena.depth_of(NodeId::from(0)), 0);
+    }
+
+    #[test]
+    fn depth_of_root_matches_depth_of_node() {
+        let mut arena = ExprArena::new();
+        let root_node = build_nested(&mut arena);
+        let root = arena.add_root(root_node);
+        assert_eq!(arena.depth_of_root(root), arena.depth_of(root_node));
+    }
+
+    #[test]
+    fn depth_of_root_invalid_root_is_zero() {
+        let arena: ExprArena<()> = ExprArena::new();
+        assert_eq!(arena.depth_of_root(RootId::from(0)), 0);
+    }
+
+    #[test]
+    fn node_count_matches_walk_expr_count() {
+        let mut arena = ExprArena::new();
+        let root_node = build_nested(&mut arena);
+        assert_eq!(
+            arena.node_count(root_node),
+            arena.walk_expr(root_node).count()
+        );
+        assert_eq!(arena.node_count(root_node), 5);
+    }
+
+    #[test]
+    fn node_count_invalid_node_is_zero() {
+        let arena: ExprArena<()> = ExprArena::new();
+        assert_eq!(arena.node_count(NodeId::from(0)), 0);
+    }
+
+    #[test]
+    fn node_count_of_root_matches_node_count() {
+        let mut arena = ExprArena::new();
+        let root_node = build_nested(&mut arena);
+        let root = arena.add_root(root_node);
+        assert_eq!(arena.node_count_of_root(root), arena.node_count(root_node));
+    }
+
+    #[test]
+    fn node_count_of_root_invalid_root_is_zero() {
+        let arena: ExprArena<()> = ExprArena::new();
+        assert_eq!(arena.node_count_of_root(RootId::from(0)), 0);
     }
 
     #[test]

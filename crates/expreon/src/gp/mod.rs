@@ -5,8 +5,6 @@ use rand::RngCore;
 use expreon_ast::{ExprArena, ExprNode, NodeId, NodeKind, ParameterId, RootId, Scalar};
 use expreon_eval::ops::OperationTable;
 
-use crate::gp::builder::NodeBuilder;
-
 pub(crate) mod breeding;
 pub(crate) mod builder;
 pub mod fitness;
@@ -14,12 +12,24 @@ pub mod mutation;
 pub(crate) mod population;
 pub mod subtree;
 
-pub use breeding::GenerationBreeder;
-pub use fitness::{
-    Fitness, IntegerFitness, ScalarFitness, k_best_of, k_best_of_with_comparator,
-    k_tournament_selection, k_tournament_selection_with_comparator,
+pub use breeding::{
+    Breeder, GatedGenerationBreeder, GatedIndividualBuilder, GenerationBreeder,
+    GenerationBreederParts,
 };
-pub use population::{Population, Scored};
+use builder::NodeBuilder;
+pub use fitness::{
+    Fitness, IntegerFitness, ParetoFitness, ScalarFitness, k_best_of, k_best_of_with_comparator,
+    k_tournament_selection, k_tournament_selection_with_comparator, pareto_cmp,
+};
+
+use population::{Population, Scored};
+pub mod prelude {
+    pub use crate::gp::population::{Population, Scored};
+    pub use crate::gp::{
+        Breeder, Context, Fitness, Generation, Genome, Individual, k_best_of,
+        k_tournament_selection, mutation::Mutator,
+    };
+}
 
 /// Base trait for a genome.
 ///
@@ -43,6 +53,7 @@ pub trait Genome: Clone {
 
 /// A single individual: contains an handle to the root expression node
 /// and its parameters.
+#[derive(Clone)]
 pub struct Individual<G: Genome> {
     pub root: RootId,
     pub parameters: Vec<Scalar>,
@@ -140,12 +151,12 @@ impl<G: Genome, F: Fitness> Context<G, F> {
 
     /// Returns the generation index for the population in the context.
     #[inline]
-    pub fn get_generation_index(&self) -> usize {
+    pub fn generation(&self) -> usize {
         self.generation_index
     }
 
     /// Resets the generation index to zero.
-    pub fn reset_generational_index(&mut self) {
+    pub fn reset_generation(&mut self) {
         self.generation_index = 0;
     }
 
@@ -157,6 +168,23 @@ impl<G: Genome, F: Fitness> Context<G, F> {
     /// fields with [`GenerationBreeder::new`] instead.
     pub fn breeder(&mut self) -> GenerationBreeder<'_, G, F> {
         GenerationBreeder::new(&self.current, &mut self.next, &self.operations)
+    }
+
+    /// Returns a [`GatedGenerationBreeder`] view over `current` (read) and
+    /// `next` (write), gated by `hook`: every offspring committed through it
+    /// (including elitism copies) is offered to `hook` first, and is only
+    /// inserted if it accepts. See [`GatedGenerationBreeder`] for what
+    /// happens to a rejected offspring's nodes. Finalize the cycle with
+    /// [`Context::advance`].
+    ///
+    /// This borrows the whole context mutably; if a reference into `current`
+    /// (e.g. a selected parent) is already held, assemble the view from the
+    /// fields with [`GatedGenerationBreeder::new`] instead.
+    pub fn gated_breeder<H>(&mut self, hook: H) -> GatedGenerationBreeder<'_, G, F, H>
+    where
+        H: FnMut(&Individual<G>, &ExprArena<G::Tag>) -> bool + 'static,
+    {
+        GatedGenerationBreeder::new(&self.current, &mut self.next, &self.operations, hook)
     }
 
     /// Returns a builder for constructing a single individual into the
@@ -198,7 +226,9 @@ impl<'a, G: Genome, F: Fitness> IndividualBuilder<'a, G, F> {
     }
 }
 
-impl<'a, G: Genome, F: Fitness> NodeBuilder<G> for IndividualBuilder<'a, G, F> {
+impl<'a, G: Genome, F: Fitness> NodeBuilder for IndividualBuilder<'a, G, F> {
+    type Genome = G;
+
     fn rng(&mut self) -> &mut dyn RngCore {
         self.rng
     }
@@ -248,14 +278,14 @@ mod tests {
     #[test]
     fn new_context_starts_at_generation_zero() {
         let ctx = new_ctx();
-        assert_eq!(ctx.get_generation_index(), 0);
+        assert_eq!(ctx.generation(), 0);
     }
 
     #[test]
     fn advance_increments_generation_index() {
         let mut ctx = new_ctx();
         ctx.advance();
-        assert_eq!(ctx.get_generation_index(), 1);
+        assert_eq!(ctx.generation(), 1);
     }
 
     #[test]
@@ -264,19 +294,19 @@ mod tests {
         for _ in 0..5 {
             ctx.advance();
         }
-        assert_eq!(ctx.get_generation_index(), 5);
+        assert_eq!(ctx.generation(), 5);
     }
 
     #[test]
-    fn reset_generational_index_resets_to_zero() {
+    fn reset_generation_resets_to_zero() {
         let mut ctx = new_ctx();
         for _ in 0..3 {
             ctx.advance();
         }
-        ctx.reset_generational_index();
-        assert_eq!(ctx.get_generation_index(), 0);
+        ctx.reset_generation();
+        assert_eq!(ctx.generation(), 0);
 
         ctx.advance();
-        assert_eq!(ctx.get_generation_index(), 1);
+        assert_eq!(ctx.generation(), 1);
     }
 }

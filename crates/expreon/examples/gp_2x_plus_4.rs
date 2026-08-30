@@ -11,22 +11,19 @@
 
 use std::cmp::Ordering;
 
+use expreon::gp::prelude::*;
+use expreon::gp::{
+    IntegerFitness, ScalarFitness,
+    fitness::pareto_cmp,
+    mutation::builtin::{
+        HoistMutation, InsertMutation, ParamJitter, ParamResample, PointMutation, SubtreeMutation,
+        TerminalTypeSwap,
+    },
+    subtree::{GrowSubtreeConfig, TreeGenConfig, TreeMethod, gen_tree},
+};
 use expreon::ops::builtin::{Add, Div, MathBaseOps, Mul, Sub};
 use expreon::{
     eval::{EvalBufferStack, VectorizedEvalContext},
-    gp::{
-        Context, Fitness, GenerationBreeder, Genome, Individual, IntegerFitness, ScalarFitness,
-        fitness::pareto_cmp,
-        k_best_of, k_tournament_selection,
-        mutation::{
-            Mutator,
-            builtin::{
-                HoistMutation, InsertMutation, ParamJitter, ParamResample, PointMutation,
-                SubtreeMutation, TerminalTypeSwap,
-            },
-        },
-        subtree::{GrowSubtreeConfig, TreeGenConfig, TreeMethod, gen_tree},
-    },
     prelude::*,
 };
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
@@ -91,15 +88,12 @@ fn mse(
     targets: ArrayView1<Scalar>,
     stack: &mut EvalBufferStack,
 ) -> f32 {
-    let root_node = match eval.arena.get_root(ind.root) {
-        Some(n) => n,
-        None => return f32::MAX,
+    let Some(root_node) = eval.arena.get_root(ind.root) else {
+        return f32::MAX; // no root: a dead individual, scored as the worst possible.
     };
+    let preds_buf = eval.eval_batch(root_node, inputs, &ind.parameters, stack);
 
     let batch = inputs.nrows();
-    let params_arr = make_params_array(&ind.parameters, batch);
-
-    let preds_buf = eval.eval_batch(root_node, inputs, params_arr.view(), stack);
     let err: f32 = preds_buf
         .iter()
         .zip(targets.iter())
@@ -107,40 +101,21 @@ fn mse(
         .sum::<f32>()
         / batch as f32;
     stack.reclaim(preds_buf);
-
-    if err.is_nan() || err.is_infinite() {
-        f32::MAX
-    } else {
-        err
-    }
-}
-
-/// Compute total expression AST tree depth
-fn tree_depth(root: RootId, arena: &ExprArena<()>) -> usize {
-    fn depth_of(id: NodeId, arena: &ExprArena<()>) -> usize {
-        let node = arena.get_node(id).unwrap();
-        match node.kind {
-            NodeKind::Variable(_) | NodeKind::Parameter(_) => 0,
-            NodeKind::Unary { value, .. } => 1 + depth_of(value, arena),
-            NodeKind::Binary { left, right, .. } => {
-                1 + depth_of(left, arena).max(depth_of(right, arena))
-            }
-        }
-    }
-    arena.get_root(root).map_or(0, |n| depth_of(n, arena))
-}
-
-/// Total number of nodes in the expression tree.
-fn node_count(root: RootId, arena: &ExprArena<()>) -> usize {
-    arena
-        .get_root(root)
-        .map_or(0, |n| arena.iter_expr_nodes(n).count())
+    err
 }
 
 const POP_SIZE: usize = 10_000;
 const GEN_COUNT: usize = 250;
 const K: usize = 15; // tournament size
 const MSE_TARGET: f32 = 1e-9; // constant by which to stop accounting for MSE and look at other pareto criterias
+const CONST_RANGE: (Scalar, Scalar) = (-5.0, 5.0); // range shared by every mutation/generator that draws a random constant.
+
+// Hard structural cap on tree depth, enforced via a `GatedGenerationBreeder`
+// hook at breed time.
+const MAX_DEPTH: usize = 12;
+// Per-offspring-slot retries against the depth hook before giving up and
+// copying the parent through unchanged for that slot.
+const MAX_BREED_ATTEMPTS: usize = 5;
 
 // Score every unscored individual in the current generation
 fn evaluate_population(
@@ -156,13 +131,13 @@ fn evaluate_population(
         let accuracy = if raw < MSE_TARGET { 0.0 } else { raw };
         RegressionFitness {
             mse: accuracy.into(),
-            nodes: node_count(ind.root, arena).into(),
-            depth: tree_depth(ind.root, arena).into(),
+            nodes: arena.node_count_of_root(ind.root).into(),
+            depth: arena.depth_of_root(ind.root).into(),
         }
     });
 }
 
-/// Format the AST tree expression for display
+/// Format the AST tree expression for display.
 fn fmt_node(
     node_id: NodeId,
     arena: &ExprArena<()>,
@@ -192,11 +167,6 @@ fn fmt_node(
     }
 }
 
-fn make_params_array(params: &[Scalar], batch: usize) -> Array2<Scalar> {
-    let n = params.len().max(1); // eval_batch expects at least 1 param column
-    Array2::from_shape_fn((batch, n), |(_, j)| params.get(j).copied().unwrap_or(0.0))
-}
-
 fn main() {
     // Training data: 20 points, x ∈ [−5, 5], y ∈ [−4, 4], target = 2x² + 4y + 3.
     const N: usize = 128;
@@ -212,13 +182,12 @@ fn main() {
     let inputs = Array2::from_shape_fn((N, 2), |(i, j)| if j == 0 { xs[i] } else { ys[i] });
     let targets = Array1::from_vec(targets);
 
-    // Scratch buffers for the vectorized evaluator, reused across every
-    // individual and every generation (all training batches are size N).
+    // Scratch buffers for the vectorized evaluator.
     let mut stack = EvalBufferStack::new(N);
 
     let tree_cfg = TreeGenConfig {
-        p_terminal: 0.3,
-        const_range: (-5.0, 5.0),
+        const_range: CONST_RANGE,
+        ..Default::default()
     };
 
     let mut gp_context: Context<Scalar2DGenome, RegressionFitness> = Context::new(build_op_table());
@@ -230,11 +199,11 @@ fn main() {
             0.5,
             SubtreeMutation {
                 grow: GrowSubtreeConfig {
-                    max_depth: 3,
                     tuning: TreeGenConfig {
                         p_terminal: 0.4,
-                        const_range: (-5.0, 5.0),
+                        const_range: CONST_RANGE,
                     },
+                    ..Default::default()
                 },
             },
         )
@@ -244,27 +213,27 @@ fn main() {
         .add(
             0.2,
             InsertMutation {
-                const_range: (-5.0, 5.0),
+                const_range: CONST_RANGE,
                 p_binary: 0.5,
             },
         )
         .add(
             0.1,
             TerminalTypeSwap {
-                const_range: (-5.0, 5.0),
+                const_range: CONST_RANGE,
             },
         )
         .add(
             0.1,
             ParamResample {
-                const_range: (-5.0, 5.0),
+                const_range: CONST_RANGE,
             },
         );
 
     // Initial population in the current generation (`finish` inserts).
     for _ in 0..POP_SIZE {
         let mut b = gp_context.builder(&mut rng);
-        let root = gen_tree::<Scalar2DGenome, _>(&mut b, &tree_cfg, TreeMethod::Grow, 4);
+        let root = gen_tree(&mut b, &tree_cfg, TreeMethod::Grow, 4);
         b.finish(root);
     }
 
@@ -272,12 +241,14 @@ fn main() {
     println!("Target expression: 2x² + 4y + 3 (2-D input)");
     println!("pop={POP_SIZE}  gens={GEN_COUNT}  tournament k={K}\n");
 
-    while gp_context.get_generation_index() < GEN_COUNT {
+    while gp_context.generation() < GEN_COUNT {
         evaluate_population(&mut gp_context, &inputs.view(), &targets.view(), &mut stack);
-        let best = k_best_of(&gp_context.current.population, 1)
-            .into_iter()
-            .next()
-            .unwrap();
+        let best: Scored<Scalar2DGenome, RegressionFitness> =
+            k_best_of(&gp_context.current.population, 1)
+                .first()
+                .cloned()
+                .unwrap()
+                .clone();
 
         let best_root_node_id = gp_context
             .current
@@ -286,7 +257,7 @@ fn main() {
             .expect("no individual with mathing root id");
 
         let best_fitness = best.fitness.unwrap_or(RegressionFitness::WORST);
-        let generation = gp_context.get_generation_index();
+        let generation = gp_context.generation();
 
         if generation % 10 == 0 {
             println!(
@@ -304,20 +275,29 @@ fn main() {
             );
         }
 
-        // Build the next generation, then advance. `Breeding::new` takes the
-        // context fields directly so the outstanding `best` reference into
-        // `current` stays valid while `next` is borrowed mutably.
+        // Build the new generation through a gated breeder that enforces the hard depth limit.
         {
-            let mut breeding = GenerationBreeder::new(
-                &gp_context.current,
-                &mut gp_context.next,
-                &gp_context.operations,
+            let mut breeding = gp_context.gated_breeder(
+                |ind: &Individual<Scalar2DGenome>, arena: &ExprArena<()>| {
+                    arena.depth_of_root(ind.root) <= MAX_DEPTH
+                },
             );
-            // Elitism: carry the best individual over unchanged (keeps its fitness).
-            breeding.copy_individual_over(best);
+
+            // Elitism: carry the best individual over unchanged (keeps its
+            // fitness).
+            breeding
+                .copy_individual_over(&best)
+                .expect("elite individual unexpectedly rejected by depth hook");
+
             for _ in 1..POP_SIZE {
                 let parent = k_tournament_selection(&breeding.source.population, K, &mut rng);
-                mutator.breed(&mut breeding, parent, &mut rng);
+
+                // Attempt to breed a new offspring from `parent` up to `MAX_BREED_ATTEMPTS` times, until the depth hook accepts it. If all attempts fail, copy the parent over unchanged.
+                let bred = (0..MAX_BREED_ATTEMPTS)
+                    .any(|_| mutator.breed(&mut breeding, parent, &mut rng).is_some());
+                if !bred {
+                    breeding.copy_individual_over(parent);
+                }
             }
         }
 
@@ -334,8 +314,8 @@ fn main() {
 
     let arena = &gp_context.current.arena;
     let root_node = arena.get_root(best.individual.root).unwrap();
-    let n_nodes = arena.iter_expr_nodes(root_node).count();
-    let depth = tree_depth(best.individual.root, arena);
+    let n_nodes = arena.node_count_of_root(best.individual.root);
+    let depth = arena.depth_of_root(best.individual.root);
     let eval = VectorizedEvalContext::new(arena, &gp_context.operations);
     let raw_mse = mse(
         &best.individual,
@@ -372,15 +352,12 @@ fn main() {
                 if j == 0 { test_pts[i].0 } else { test_pts[i].1 }
             },
         );
-    let params_arr = make_params_array(&best.individual.parameters, 5);
-    // Different batch size (5 test points vs. N training points) needs its
-    // own stack;
-    let mut test_stack = EvalBufferStack::new(5);
+
     let preds_buf = eval.eval_batch(
         root_node,
         test_inputs.view(),
-        params_arr.view(),
-        &mut test_stack,
+        &best.individual.parameters,
+        &mut stack,
     );
 
     println!("\nTest predictions (target = 2x² + 4y + 3):");
@@ -399,5 +376,5 @@ fn main() {
             preds_buf[i] - t
         );
     }
-    test_stack.reclaim(preds_buf);
+    stack.reclaim(preds_buf);
 }

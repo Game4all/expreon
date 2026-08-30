@@ -89,7 +89,9 @@ impl<'a, G: Genome> MutationContext<'a, G> {
     }
 }
 
-impl<'a, G: Genome> NodeBuilder<G> for MutationContext<'a, G> {
+impl<'a, G: Genome> NodeBuilder for MutationContext<'a, G> {
+    type Genome = G;
+
     fn rng(&mut self) -> &mut dyn RngCore {
         self.rng
     }

@@ -7,7 +7,10 @@ use super::Genome;
 
 /// The minimal node-construction surface required to build expression trees.
 /// Provides methods to emit nodes in an arena and helpers to create new parameters.
-pub trait NodeBuilder<G: Genome> {
+pub trait NodeBuilder {
+    /// The genome this builder constructs expressions for.
+    type Genome: Genome;
+
     /// Returns the underlying RNG.
     fn rng(&mut self) -> &mut dyn RngCore;
 
@@ -15,7 +18,7 @@ pub trait NodeBuilder<G: Genome> {
     fn ops(&self) -> &OperationTable;
 
     /// Emit a node into the arena. The caller controls the tag on the node.
-    fn emit(&mut self, node: ExprNode<G::Tag>) -> NodeId;
+    fn emit(&mut self, node: ExprNode<<Self::Genome as Genome>::Tag>) -> NodeId;
 
     /// Allocate a new parameter slot initialised to `value` and return its id.
     fn new_parameter(&mut self, value: Scalar) -> ParameterId;
@@ -36,12 +39,12 @@ pub trait NodeBuilder<G: Genome> {
         self.ops().iter_binary_ops().nth(idx).unwrap()
     }
 
-    /// Picks a random input variable ID in the range `0..G::INPUT_DIM`.
+    /// Picks a random input variable ID in the range `0..Self::Genome::INPUT_DIM`.
     fn pick_variable(&mut self) -> VariableId {
         assert!(
-            G::INPUT_DIM > 0,
+            Self::Genome::INPUT_DIM > 0,
             "genome has no input variables (INPUT_DIM == 0)"
         );
-        VariableId::from(self.rng().random_range(0..G::INPUT_DIM))
+        VariableId::from(self.rng().random_range(0..Self::Genome::INPUT_DIM))
     }
 }
