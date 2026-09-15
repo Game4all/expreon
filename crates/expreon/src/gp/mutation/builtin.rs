@@ -21,7 +21,7 @@ use super::{Mutation, MutationContext};
 pub struct PointMutation;
 
 impl<G: Genome> Mutation<G> for PointMutation {
-    fn applies_to(&self, kind: NodeKind) -> bool {
+    fn applies_to(&self, kind: NodeKind, _input_dim: u16) -> bool {
         matches!(kind, NodeKind::Unary { .. } | NodeKind::Binary { .. })
     }
 
@@ -66,7 +66,7 @@ pub struct SubtreeMutation {
 }
 
 impl<G: Genome> Mutation<G> for SubtreeMutation {
-    fn applies_to(&self, _kind: NodeKind) -> bool {
+    fn applies_to(&self, _kind: NodeKind, _: u16) -> bool {
         true // any node can be replaced
     }
 
@@ -92,7 +92,7 @@ pub struct ParamJitter {
 }
 
 impl<G: Genome> Mutation<G> for ParamJitter {
-    fn applies_to(&self, kind: NodeKind) -> bool {
+    fn applies_to(&self, kind: NodeKind, _: u16) -> bool {
         matches!(kind, NodeKind::Parameter(_))
     }
 
@@ -128,7 +128,7 @@ impl<G: Genome> Mutation<G> for ParamJitter {
 pub struct HoistMutation;
 
 impl<G: Genome> Mutation<G> for HoistMutation {
-    fn applies_to(&self, kind: NodeKind) -> bool {
+    fn applies_to(&self, kind: NodeKind, _: u16) -> bool {
         // Only internal nodes have descendants to hoist.
         matches!(kind, NodeKind::Unary { .. } | NodeKind::Binary { .. })
     }
@@ -168,7 +168,7 @@ pub struct InsertMutation {
 }
 
 impl<G: Genome> Mutation<G> for InsertMutation {
-    fn applies_to(&self, _kind: NodeKind) -> bool {
+    fn applies_to(&self, _kind: NodeKind, _: u16) -> bool {
         true // any node can be wrapped
     }
 
@@ -227,7 +227,7 @@ impl<G: Genome> Mutation<G> for InsertMutation {
 /// Swaps a leaf's *type*: a `Variable` becomes a fresh `Parameter`, and a
 /// `Parameter` becomes a `Variable`. Direction is determined entirely by the
 /// target's current kind. Swapping a parameter to a variable requires the
-/// genome to have input variables (`INPUT_DIM > 0`).
+/// dataset to have input variables (`input_dim > 0`).
 pub struct TerminalTypeSwap {
     /// Range [lo, hi) for the fresh constant value used when a variable is
     /// swapped for a parameter.
@@ -235,10 +235,10 @@ pub struct TerminalTypeSwap {
 }
 
 impl<G: Genome> Mutation<G> for TerminalTypeSwap {
-    fn applies_to(&self, kind: NodeKind) -> bool {
+    fn applies_to(&self, kind: NodeKind, input_dim: u16) -> bool {
         match kind {
             NodeKind::Variable(_) => true,
-            NodeKind::Parameter(_) => G::INPUT_DIM > 0,
+            NodeKind::Parameter(_) => input_dim > 0,
             _ => false,
         }
     }
@@ -272,13 +272,13 @@ impl<G: Genome> Mutation<G> for TerminalTypeSwap {
 // ---------------------------------------------------------------------------
 
 /// Re-points a `Variable` leaf at a different input variable id. Only applies
-/// when the genome has more than one input (`INPUT_DIM > 1`), since with one
+/// when the dataset has more than one input (`input_dim > 1`), since with one
 /// or zero inputs there is no other variable to switch to.
 pub struct VariableReindex;
 
 impl<G: Genome> Mutation<G> for VariableReindex {
-    fn applies_to(&self, kind: NodeKind) -> bool {
-        matches!(kind, NodeKind::Variable(_)) && G::INPUT_DIM > 1
+    fn applies_to(&self, kind: NodeKind, input_dim: u16) -> bool {
+        matches!(kind, NodeKind::Variable(_)) && input_dim > 1
     }
 
     fn apply(
@@ -317,7 +317,7 @@ pub struct ParamResample {
 }
 
 impl<G: Genome> Mutation<G> for ParamResample {
-    fn applies_to(&self, kind: NodeKind) -> bool {
+    fn applies_to(&self, kind: NodeKind, _: u16) -> bool {
         matches!(kind, NodeKind::Parameter(_))
     }
 
@@ -411,6 +411,7 @@ mod tests {
             &src,
             &mut dest,
             &ops,
+            2,
             &mut rng,
         )
         .unwrap();
@@ -452,6 +453,7 @@ mod tests {
             &src,
             &mut dest,
             &ops,
+            2,
             &mut rng,
         )
         .unwrap();
@@ -503,6 +505,7 @@ mod tests {
             &src,
             &mut dest,
             &ops,
+            2,
             &mut rng,
         )
         .unwrap();
@@ -551,6 +554,7 @@ mod tests {
             &src,
             &mut dest,
             &ops,
+            2,
             &mut rng,
         )
         .unwrap();
@@ -583,6 +587,7 @@ mod tests {
                 &src,
                 &mut dest,
                 &ops,
+                2,
                 &mut rng,
             )
             .unwrap();
@@ -620,6 +625,7 @@ mod tests {
             &src,
             &mut dest,
             &ops,
+            2,
             &mut rng,
         )
         .unwrap();
@@ -664,6 +670,7 @@ mod tests {
             &src,
             &mut dest,
             &ops,
+            2,
             &mut rng,
         )
         .unwrap();
@@ -712,6 +719,7 @@ mod tests {
             &src,
             &mut dest,
             &ops,
+            2,
             &mut rng,
         )
         .unwrap();
@@ -765,6 +773,7 @@ mod tests {
             &src,
             &mut dest,
             &ops,
+            2,
             &mut rng,
         )
         .unwrap();
@@ -819,6 +828,7 @@ mod tests {
             &src,
             &mut dest,
             &ops,
+            2,
             &mut rng,
         )
         .unwrap();

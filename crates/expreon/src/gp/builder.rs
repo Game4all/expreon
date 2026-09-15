@@ -17,6 +17,12 @@ pub trait NodeBuilder {
     /// Returns the operation table.
     fn ops(&self) -> &OperationTable;
 
+    /// Number of input variables available to expressions being built:
+    /// valid variable IDs are in the `0..input_dim()` range. Fixed for the builder's
+    /// lifetime by the [`Dataset`](crate::gp::Dataset) the owning
+    /// [`Context`](crate::gp::Context) was created with.
+    fn input_dim(&self) -> u16;
+
     /// Emit a node into the arena. The caller controls the tag on the node.
     fn emit(&mut self, node: ExprNode<<Self::Genome as Genome>::Tag>) -> NodeId;
 
@@ -39,12 +45,10 @@ pub trait NodeBuilder {
         self.ops().iter_binary_ops().nth(idx).unwrap()
     }
 
-    /// Picks a random input variable ID in the range `0..Self::Genome::INPUT_DIM`.
+    /// Picks a random input variable ID in the range `0..self.input_dim()`.
     fn pick_variable(&mut self) -> VariableId {
-        assert!(
-            Self::Genome::INPUT_DIM > 0,
-            "genome has no input variables (INPUT_DIM == 0)"
-        );
-        VariableId::from(self.rng().random_range(0..Self::Genome::INPUT_DIM))
+        let dim = self.input_dim();
+        assert!(dim > 0, "dataset has no input variables (input_dim == 0)");
+        VariableId::from(self.rng().random_range(0..dim))
     }
 }

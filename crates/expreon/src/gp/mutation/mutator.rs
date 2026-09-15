@@ -43,6 +43,7 @@ impl<G: Genome + 'static> Mutator<G> {
         source: &ExprArena<G::Tag>,
         dest: &mut ExprArena<G::Tag>,
         ops: &OperationTable,
+        input_dim: u16,
         rng: &mut dyn RngCore,
     ) -> Option<Individual<G>> {
         // Collect mutable candidate nodes from the genome of the invidivual.
@@ -60,7 +61,11 @@ impl<G: Genome + 'static> Mutator<G> {
                 let targets: Vec<NodeId> = candidates
                     .iter()
                     .copied()
-                    .filter(|&id| source.get_node(id).is_some_and(|n| m.applies_to(n.kind)))
+                    .filter(|&id| {
+                        source
+                            .get_node(id)
+                            .is_some_and(|n| m.applies_to(n.kind, input_dim))
+                    })
                     .collect();
                 if targets.is_empty() {
                     None
@@ -91,7 +96,7 @@ impl<G: Genome + 'static> Mutator<G> {
         // Pick a target uniformly.
         let target = targets[rng.random_range(0..targets.len())];
 
-        super::apply_mutation(mutation, target, parent, source, dest, ops, rng)
+        super::apply_mutation(mutation, target, parent, source, dest, ops, input_dim, rng)
     }
 
     /// Breeds `parent` (from the breeder's source generation) by applying one
@@ -111,7 +116,14 @@ impl<G: Genome + 'static> Mutator<G> {
     ) -> Option<&'b mut Scored<G, F>> {
         let child = {
             let parts = breeder.parts();
-            self.mutate(&parent.individual, parts.source, parts.dest, parts.ops, rng)?
+            self.mutate(
+                &parent.individual,
+                parts.source,
+                parts.dest,
+                parts.ops,
+                parts.input_dim,
+                rng,
+            )?
         };
         breeder.commit(child)
     }
@@ -133,7 +145,7 @@ mod tests {
     use crate::gp::{
         Context, GatedGenerationBreeder, Individual, ScalarFitness,
         mutation::{Mutator, builtin::PointMutation},
-        test_genome::TestSimpleGenome,
+        test_genome::{TestSimpleGenome, test_dataset},
     };
 
     fn base_ops() -> OperationTable {
@@ -168,7 +180,7 @@ mod tests {
             mutator.add(1.0, PointMutation);
 
             let offspring = mutator
-                .mutate(&parent, &src, &mut dest, &ops, &mut rng)
+                .mutate(&parent, &src, &mut dest, &ops, 2, &mut rng)
                 .unwrap();
             let root_node = dest.get_root(offspring.root).unwrap();
             dest.iter_expr_nodes(root_node).map(|(id, _)| id).collect()
@@ -184,7 +196,7 @@ mod tests {
     fn breed_respects_breeder_acceptance() {
         let ops = base_ops();
 
-        let mut ctx: Context<TestSimpleGenome, ScalarFitness> = Context::new(ops);
+        let mut ctx: Context<TestSimpleGenome, ScalarFitness> = Context::new(ops, &test_dataset());
         let mut rng = StdRng::seed_from_u64(99);
         {
             let mut b = ctx.builder(&mut rng);
@@ -206,6 +218,7 @@ mod tests {
                 &ctx.current,
                 &mut ctx.next,
                 &ctx.operations,
+                2,
                 |_: &_, _: &_| true,
             );
             assert!(mutator.breed(&mut breeding, parent, &mut rng).is_some());
@@ -220,6 +233,7 @@ mod tests {
                 &ctx.current,
                 &mut ctx.next,
                 &ctx.operations,
+                2,
                 |_: &_, _: &_| false,
             );
             assert!(mutator.breed(&mut breeding, parent, &mut rng).is_none());

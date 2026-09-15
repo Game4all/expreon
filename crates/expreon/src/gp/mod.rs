@@ -7,6 +7,7 @@ use expreon_eval::ops::OperationTable;
 
 pub(crate) mod breeding;
 pub(crate) mod builder;
+pub mod dataset;
 pub mod fitness;
 pub mod mutation;
 pub(crate) mod population;
@@ -17,6 +18,7 @@ pub use breeding::{
     GenerationBreederParts,
 };
 use builder::NodeBuilder;
+pub use dataset::{ArrayDataset, Dataset};
 pub use fitness::{
     Fitness, IntegerFitness, ParetoFitness, ScalarFitness, k_best_of, k_best_of_with_comparator,
     k_tournament_selection, k_tournament_selection_with_comparator, pareto_cmp,
@@ -26,7 +28,7 @@ use population::{Population, Scored};
 pub mod prelude {
     pub use crate::gp::population::{Population, Scored};
     pub use crate::gp::{
-        Breeder, Context, Fitness, Generation, Genome, Individual, k_best_of,
+        Breeder, Context, Dataset, Fitness, Generation, Genome, Individual, k_best_of,
         k_tournament_selection, mutation::Mutator,
     };
 }
@@ -37,10 +39,6 @@ pub mod prelude {
 pub trait Genome: Clone {
     /// Associated type for a Tag type. Used for tagging nodes of the expression for i.e filtering mutation targets.
     type Tag: Clone;
-
-    /// Dimension of the input vector: the number of input variables available
-    /// to expressions built from this genome. Valid variable IDs are `0..INPUT_DIM`.
-    const INPUT_DIM: u16;
 
     /// Returns a list of potential mutation targets for this individual genome.
     fn mutation_targets(root: RootId, arena: &ExprArena<Self::Tag>) -> Vec<NodeId> {
@@ -115,6 +113,7 @@ pub struct Context<G: Genome, F: Fitness> {
     pub current: Generation<G, F>,
     pub next: Generation<G, F>,
     pub operations: OperationTable,
+    input_dim: u16,
     generation_index: usize,
 }
 
@@ -128,15 +127,20 @@ pub struct IndividualBuilder<'a, G: Genome, F: Fitness> {
     population: &'a mut Population<G, F>,
     ops: &'a OperationTable,
     rng: &'a mut dyn RngCore,
+    input_dim: u16,
     params: Vec<Scalar>,
 }
 
 impl<G: Genome, F: Fitness> Context<G, F> {
-    pub const fn new(op: OperationTable) -> Self {
+    /// Creates a new context. `dataset` is consulted once, at construction,
+    /// to fix the input dimension every expression built through this
+    /// context may reference. See [`Context::input_dim`].
+    pub fn new(op: OperationTable, dataset: &impl Dataset) -> Self {
         Self {
             current: Generation::new(),
             next: Generation::new(),
             operations: op,
+            input_dim: dataset.input_dim(),
             generation_index: 0,
         }
     }
@@ -155,6 +159,14 @@ impl<G: Genome, F: Fitness> Context<G, F> {
         self.generation_index
     }
 
+    /// Returns the number of input variables available to expressions built
+    /// through this context, fixed at construction from the [`Dataset`]
+    /// passed to [`Context::new`].
+    #[inline]
+    pub const fn input_dim(&self) -> u16 {
+        self.input_dim
+    }
+
     /// Resets the generation index to zero.
     pub fn reset_generation(&mut self) {
         self.generation_index = 0;
@@ -167,7 +179,12 @@ impl<G: Genome, F: Fitness> Context<G, F> {
     /// (e.g. a selected parent) is already held, assemble the view from the
     /// fields with [`GenerationBreeder::new`] instead.
     pub fn breeder(&mut self) -> GenerationBreeder<'_, G, F> {
-        GenerationBreeder::new(&self.current, &mut self.next, &self.operations)
+        GenerationBreeder::new(
+            &self.current,
+            &mut self.next,
+            &self.operations,
+            self.input_dim,
+        )
     }
 
     /// Returns a [`GatedGenerationBreeder`] view over `current` (read) and
@@ -184,7 +201,13 @@ impl<G: Genome, F: Fitness> Context<G, F> {
     where
         H: FnMut(&Individual<G>, &ExprArena<G::Tag>) -> bool + 'static,
     {
-        GatedGenerationBreeder::new(&self.current, &mut self.next, &self.operations, hook)
+        GatedGenerationBreeder::new(
+            &self.current,
+            &mut self.next,
+            &self.operations,
+            self.input_dim,
+            hook,
+        )
     }
 
     /// Returns a builder for constructing a single individual into the
@@ -195,6 +218,7 @@ impl<G: Genome, F: Fitness> Context<G, F> {
             &mut self.current.arena,
             &mut self.current.population,
             &self.operations,
+            self.input_dim,
             rng,
         )
     }
@@ -205,6 +229,7 @@ impl<'a, G: Genome, F: Fitness> IndividualBuilder<'a, G, F> {
         arena: &'a mut ExprArena<G::Tag>,
         population: &'a mut Population<G, F>,
         ops: &'a OperationTable,
+        input_dim: u16,
         rng: &'a mut dyn RngCore,
     ) -> Self {
         Self {
@@ -212,6 +237,7 @@ impl<'a, G: Genome, F: Fitness> IndividualBuilder<'a, G, F> {
             population,
             ops,
             rng,
+            input_dim,
             params: Vec::new(),
         }
     }
@@ -237,6 +263,10 @@ impl<'a, G: Genome, F: Fitness> NodeBuilder for IndividualBuilder<'a, G, F> {
         self.ops
     }
 
+    fn input_dim(&self) -> u16 {
+        self.input_dim
+    }
+
     fn emit(&mut self, node: ExprNode<G::Tag>) -> NodeId {
         self.arena.add(node)
     }
@@ -258,9 +288,15 @@ pub(crate) mod test_genome {
 
     impl Genome for TestSimpleGenome {
         type Tag = ();
-        const INPUT_DIM: u16 = 2;
 
         fn get_tag_for_node(_kind: NodeKind) -> () {}
+    }
+
+    /// A dataset with the same width (`input_dim == 2`) `TestSimpleGenome`
+    /// used to hard-code via `INPUT_DIM`, for tests that don't care about the
+    /// actual sample values.
+    pub(crate) fn test_dataset() -> crate::gp::ArrayDataset {
+        crate::gp::ArrayDataset::new(ndarray::Array2::zeros((1, 2)))
     }
 }
 
@@ -268,11 +304,11 @@ pub(crate) mod test_genome {
 mod tests {
     use expreon_eval::ops::OperationTableBuilder;
 
-    use crate::gp::test_genome::TestSimpleGenome;
+    use crate::gp::test_genome::{TestSimpleGenome, test_dataset};
     use crate::gp::{Context, ScalarFitness};
 
     fn new_ctx() -> Context<TestSimpleGenome, ScalarFitness> {
-        Context::new(OperationTableBuilder::new().build())
+        Context::new(OperationTableBuilder::new().build(), &test_dataset())
     }
 
     #[test]

@@ -18,8 +18,11 @@ use super::builder::NodeBuilder;
 /// what subtree should replace `target` in the offspring? Unchanged parts of
 /// the tree are copied verbatim via `MutationContext::copy_subtree`.
 pub trait Mutation<G: Genome>: 'static {
-    /// Whether this mutation can act on a node of the given kind.
-    fn applies_to(&self, kind: NodeKind) -> bool;
+    /// Whether this mutation can act on a node of the given kind. `input_dim`
+    /// is the number of input variables available to the genome (see
+    /// [`crate::gp::Dataset`]), for mutations whose applicability depends on
+    /// it (e.g. swapping a leaf to a variable requires at least one).
+    fn applies_to(&self, kind: NodeKind, input_dim: u16) -> bool;
 
     /// Emit a replacement subtree for the target into the dest arena and return
     /// its root `NodeId`. `target` is the source node id (useful for splicing or
@@ -43,6 +46,7 @@ pub struct MutationContext<'a, G: Genome> {
     pub(crate) dest: &'a mut ExprArena<G::Tag>,
     pub(crate) ops: &'a OperationTable,
     pub(crate) rng: &'a mut dyn RngCore,
+    pub(crate) input_dim: u16,
     pub(crate) params: &'a mut Vec<Scalar>,
 }
 
@@ -51,6 +55,7 @@ impl<'a, G: Genome> MutationContext<'a, G> {
         source: &'a ExprArena<G::Tag>,
         ops: &'a OperationTable,
         rng: &'a mut dyn RngCore,
+        input_dim: u16,
         dest: &'a mut ExprArena<G::Tag>,
         params: &'a mut Vec<Scalar>,
     ) -> Self {
@@ -58,6 +63,7 @@ impl<'a, G: Genome> MutationContext<'a, G> {
             source,
             ops,
             rng,
+            input_dim,
             dest,
             params,
         }
@@ -98,6 +104,10 @@ impl<'a, G: Genome> NodeBuilder for MutationContext<'a, G> {
 
     fn ops(&self) -> &OperationTable {
         self.ops
+    }
+
+    fn input_dim(&self) -> u16 {
+        self.input_dim
     }
 
     fn emit(&mut self, node: ExprNode<G::Tag>) -> NodeId {
@@ -201,6 +211,7 @@ fn eliminate_dead_params<Tag: Clone>(
 /// rebuilds the tree into `dest`, and runs dead-parameter elimination
 /// if the mutation changed the expression structure.
 /// Returns `None` if `parent` has no root in `source`.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_mutation<G: Genome + 'static>(
     mutation: &dyn Mutation<G>,
     target: NodeId,
@@ -208,6 +219,7 @@ pub fn apply_mutation<G: Genome + 'static>(
     source: &ExprArena<G::Tag>,
     dest: &mut ExprArena<G::Tag>,
     ops: &OperationTable,
+    input_dim: u16,
     rng: &mut dyn RngCore,
 ) -> Option<Individual<G>> {
     let root_node: NodeId = source.get_root(parent.root)?;
@@ -216,7 +228,7 @@ pub fn apply_mutation<G: Genome + 'static>(
     // Clone parent params so the offspring gets an owned copy
     let mut params = parent.parameters.clone();
 
-    let mut ctx = MutationContext::new(source, ops, rng, dest, &mut params);
+    let mut ctx = MutationContext::new(source, ops, rng, input_dim, dest, &mut params);
 
     let new_subtree_node = mutation.apply(target, target_node, &mut ctx);
     let changed_structure = new_subtree_node.is_some();
@@ -297,7 +309,7 @@ mod tests {
 
         {
             let mut ctx: MutationContext<'_, TestSimpleGenome> =
-                MutationContext::new(&src, &ops, &mut rng, &mut dest, &mut params);
+                MutationContext::new(&src, &ops, &mut rng, 2, &mut dest, &mut params);
 
             let copied = ctx.copy_subtree(root_node);
 
@@ -320,7 +332,7 @@ mod tests {
 
         struct ReplaceWithVariable;
         impl Mutation<TestSimpleGenome> for ReplaceWithVariable {
-            fn applies_to(&self, _kind: NodeKind) -> bool {
+            fn applies_to(&self, _kind: NodeKind, _input_dim: u16) -> bool {
                 true
             }
             fn apply(
@@ -358,6 +370,7 @@ mod tests {
             &src,
             &mut dest,
             &ops,
+            2,
             &mut rng,
         )
         .unwrap();

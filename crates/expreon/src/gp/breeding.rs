@@ -13,6 +13,7 @@ pub struct GenerationBreederParts<'a, G: Genome> {
     pub source: &'a ExprArena<G::Tag>,
     pub dest: &'a mut ExprArena<G::Tag>,
     pub ops: &'a OperationTable,
+    pub input_dim: u16,
 }
 
 /// Represents a breeder that is used to prepare the
@@ -69,6 +70,7 @@ pub struct GenerationBreeder<'a, G: Genome, F: Fitness> {
     pub source: &'a Generation<G, F>,
     dest: &'a mut Generation<G, F>,
     ops: &'a OperationTable,
+    input_dim: u16,
 }
 
 impl<'a, G: Genome, F: Fitness> GenerationBreeder<'a, G, F> {
@@ -76,8 +78,14 @@ impl<'a, G: Genome, F: Fitness> GenerationBreeder<'a, G, F> {
         source: &'a Generation<G, F>,
         dest: &'a mut Generation<G, F>,
         ops: &'a OperationTable,
+        input_dim: u16,
     ) -> Self {
-        Self { source, dest, ops }
+        Self {
+            source,
+            dest,
+            ops,
+            input_dim,
+        }
     }
 
     /// Returns a builder for constructing a brand-new individual into the
@@ -88,6 +96,7 @@ impl<'a, G: Genome, F: Fitness> GenerationBreeder<'a, G, F> {
             &mut self.dest.arena,
             &mut self.dest.population,
             self.ops,
+            self.input_dim,
             rng,
         )
     }
@@ -99,6 +108,7 @@ impl<'a, G: Genome, F: Fitness> Breeder<G, F> for GenerationBreeder<'a, G, F> {
             source: &self.source.arena,
             dest: &mut self.dest.arena,
             ops: self.ops,
+            input_dim: self.input_dim,
         }
     }
 
@@ -155,6 +165,7 @@ where
     pub source: &'a Generation<G, F>,
     dest: &'a mut Generation<G, F>,
     ops: &'a OperationTable,
+    input_dim: u16,
     hook: H,
 }
 
@@ -166,12 +177,14 @@ where
         source: &'a Generation<G, F>,
         dest: &'a mut Generation<G, F>,
         ops: &'a OperationTable,
+        input_dim: u16,
         hook: H,
     ) -> Self {
         Self {
             source,
             dest,
             ops,
+            input_dim,
             hook,
         }
     }
@@ -193,6 +206,7 @@ where
             &mut self.dest.arena,
             &mut self.dest.population,
             self.ops,
+            self.input_dim,
             rng,
             &mut self.hook,
         )
@@ -208,6 +222,7 @@ where
             source: &self.source.arena,
             dest: &mut self.dest.arena,
             ops: self.ops,
+            input_dim: self.input_dim,
         }
     }
 
@@ -233,6 +248,7 @@ where
     arena: &'a mut ExprArena<G::Tag>,
     population: &'a mut Population<G, F>,
     ops: &'a OperationTable,
+    input_dim: u16,
     rng: &'a mut dyn RngCore,
     hook: &'a mut H,
     params: Vec<Scalar>,
@@ -246,6 +262,7 @@ where
         arena: &'a mut ExprArena<G::Tag>,
         population: &'a mut Population<G, F>,
         ops: &'a OperationTable,
+        input_dim: u16,
         rng: &'a mut dyn RngCore,
         hook: &'a mut H,
     ) -> Self {
@@ -253,6 +270,7 @@ where
             arena,
             population,
             ops,
+            input_dim,
             rng,
             hook,
             params: Vec::new(),
@@ -288,6 +306,10 @@ where
         self.ops
     }
 
+    fn input_dim(&self) -> u16 {
+        self.input_dim
+    }
+
     fn emit(&mut self, node: ExprNode<G::Tag>) -> NodeId {
         self.arena.add(node)
     }
@@ -308,7 +330,7 @@ mod tests {
     use expreon_eval::ops::{OperationTableBuilder, builtin::MathBaseOps};
 
     use crate::gp::builder::NodeBuilder;
-    use crate::gp::test_genome::TestSimpleGenome;
+    use crate::gp::test_genome::{TestSimpleGenome, test_dataset};
     use crate::gp::{Breeder, Context, GatedGenerationBreeder, GenerationBreeder, ScalarFitness};
 
     #[test]
@@ -317,7 +339,7 @@ mod tests {
         ob.register_set::<MathBaseOps>();
         let ops = ob.build();
 
-        let mut ctx: Context<TestSimpleGenome, ScalarFitness> = Context::new(ops);
+        let mut ctx: Context<TestSimpleGenome, ScalarFitness> = Context::new(ops, &test_dataset());
         let mut rng = StdRng::seed_from_u64(0);
 
         // Build a single-parameter individual into the current generation and
@@ -330,7 +352,8 @@ mod tests {
         }
 
         let parent = &ctx.current.population[0];
-        let mut breeding = GenerationBreeder::new(&ctx.current, &mut ctx.next, &ctx.operations);
+        let mut breeding =
+            GenerationBreeder::new(&ctx.current, &mut ctx.next, &ctx.operations, 2);
         breeding.copy_individual_over(parent);
         ctx.advance();
 
@@ -346,7 +369,7 @@ mod tests {
         ob.register_set::<MathBaseOps>();
         let ops = ob.build();
 
-        let mut ctx: Context<TestSimpleGenome, ScalarFitness> = Context::new(ops);
+        let mut ctx: Context<TestSimpleGenome, ScalarFitness> = Context::new(ops, &test_dataset());
         let mut rng = StdRng::seed_from_u64(0);
         {
             let mut b = ctx.builder(&mut rng);
@@ -355,7 +378,8 @@ mod tests {
             b.finish(node).fitness = Some(ScalarFitness(42.0));
         }
 
-        let mut breeding = GenerationBreeder::new(&ctx.current, &mut ctx.next, &ctx.operations);
+        let mut breeding =
+            GenerationBreeder::new(&ctx.current, &mut ctx.next, &ctx.operations, 2);
         let parent = &breeding.source.population[0];
         breeding.copy_individual_over(parent);
         drop(breeding);
@@ -369,7 +393,7 @@ mod tests {
         ob.register_set::<MathBaseOps>();
         let ops = ob.build();
 
-        let mut ctx: Context<TestSimpleGenome, ScalarFitness> = Context::new(ops);
+        let mut ctx: Context<TestSimpleGenome, ScalarFitness> = Context::new(ops, &test_dataset());
         let mut rng = StdRng::seed_from_u64(0);
         let mut b = ctx.builder(&mut rng);
         let p = b.new_parameter(1.5);
@@ -386,6 +410,7 @@ mod tests {
             &ctx.current,
             &mut ctx.next,
             &ctx.operations,
+            2,
             |_: &_, _: &_| true,
         );
         let parent = &breeding.source.population[0];
@@ -402,6 +427,7 @@ mod tests {
             &ctx.current,
             &mut ctx.next,
             &ctx.operations,
+            2,
             |_: &_, _: &_| true,
         );
         {
@@ -422,6 +448,7 @@ mod tests {
             &ctx.current,
             &mut ctx.next,
             &ctx.operations,
+            2,
             |_: &_, _: &_| false,
         );
         {
@@ -452,6 +479,7 @@ mod tests {
             &ctx.current,
             &mut ctx.next,
             &ctx.operations,
+            2,
             |_: &_, _: &_| false,
         );
         assert!(breeding.copy_individual_over(parent).is_none());
@@ -477,6 +505,7 @@ mod tests {
                 &ctx.current,
                 &mut ctx.next,
                 &ctx.operations,
+                2,
                 |_: &_, _: &_| false,
             );
             let mut b = breeding.builder(&mut rng);
@@ -491,6 +520,7 @@ mod tests {
                 &ctx.current,
                 &mut ctx.next,
                 &ctx.operations,
+                2,
                 |_: &_, _: &_| true,
             );
             let mut b = breeding.builder(&mut rng);

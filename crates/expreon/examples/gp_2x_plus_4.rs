@@ -13,7 +13,7 @@ use std::cmp::Ordering;
 
 use expreon::gp::prelude::*;
 use expreon::gp::{
-    IntegerFitness, ScalarFitness,
+    ArrayDataset, IntegerFitness, ScalarFitness,
     fitness::pareto_cmp,
     mutation::builtin::{
         HoistMutation, InsertMutation, ParamJitter, ParamResample, PointMutation, SubtreeMutation,
@@ -26,7 +26,7 @@ use expreon::{
     eval::{EvalBufferStack, VectorizedEvalContext},
     prelude::*,
 };
-use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
+use ndarray::{Array1, Array2, ArrayView1};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
@@ -36,7 +36,6 @@ struct Scalar2DGenome;
 
 impl Genome for Scalar2DGenome {
     type Tag = ();
-    const INPUT_DIM: u16 = 2;
     fn get_tag_for_node(_: NodeKind) -> () {}
 }
 
@@ -84,13 +83,14 @@ fn build_op_table() -> OperationTable {
 fn mse(
     ind: &Individual<Scalar2DGenome>,
     eval: &VectorizedEvalContext<'_, '_, ()>,
-    inputs: ArrayView2<Scalar>,
+    dataset: &ArrayDataset,
     targets: ArrayView1<Scalar>,
     stack: &mut EvalBufferStack,
 ) -> f32 {
     let Some(root_node) = eval.arena.get_root(ind.root) else {
         return f32::MAX; // no root: a dead individual, scored as the worst possible.
     };
+    let inputs = dataset.inputs();
     let preds_buf = eval.eval_batch(root_node, inputs, &ind.parameters, stack);
 
     let batch = inputs.nrows();
@@ -120,14 +120,14 @@ const MAX_BREED_ATTEMPTS: usize = 5;
 // Score every unscored individual in the current generation
 fn evaluate_population(
     ctx: &mut Context<Scalar2DGenome, RegressionFitness>,
-    inputs: &ArrayView2<Scalar>,
+    dataset: &ArrayDataset,
     targets: &ArrayView1<Scalar>,
     stack: &mut EvalBufferStack,
 ) {
     let arena = &ctx.current.arena;
     let eval = VectorizedEvalContext::new(arena, &ctx.operations);
     ctx.current.population.score_unscored(|ind| {
-        let raw = mse(ind, &eval, *inputs, targets.view(), stack);
+        let raw = mse(ind, &eval, dataset, targets.view(), stack);
         let accuracy = if raw < MSE_TARGET { 0.0 } else { raw };
         RegressionFitness {
             mse: accuracy.into(),
@@ -179,7 +179,9 @@ fn main() {
     let targets: Vec<Scalar> = (0..N)
         .map(|i| 2.0 * xs[i] * xs[i] + 4.0 * ys[i] + 3.0)
         .collect();
-    let inputs = Array2::from_shape_fn((N, 2), |(i, j)| if j == 0 { xs[i] } else { ys[i] });
+    let dataset = ArrayDataset::new(Array2::from_shape_fn((N, 2), |(i, j)| {
+        if j == 0 { xs[i] } else { ys[i] }
+    }));
     let targets = Array1::from_vec(targets);
 
     // Scratch buffers for the vectorized evaluator.
@@ -190,7 +192,8 @@ fn main() {
         ..Default::default()
     };
 
-    let mut gp_context: Context<Scalar2DGenome, RegressionFitness> = Context::new(build_op_table());
+    let mut gp_context: Context<Scalar2DGenome, RegressionFitness> =
+        Context::new(build_op_table(), &dataset);
     let mut rng = StdRng::seed_from_u64(42);
 
     let mut mutator: Mutator<Scalar2DGenome> = Mutator::new();
@@ -242,7 +245,7 @@ fn main() {
     println!("pop={POP_SIZE}  gens={GEN_COUNT}  tournament k={K}\n");
 
     while gp_context.generation() < GEN_COUNT {
-        evaluate_population(&mut gp_context, &inputs.view(), &targets.view(), &mut stack);
+        evaluate_population(&mut gp_context, &dataset, &targets.view(), &mut stack);
         let best: Scored<Scalar2DGenome, RegressionFitness> =
             k_best_of(&gp_context.current.population, 1)
                 .first()
@@ -306,7 +309,7 @@ fn main() {
 
     // The last generation produced by the loop is unscored after the final
     // advance; score it before reporting the overall best.
-    evaluate_population(&mut gp_context, &inputs.view(), &targets.view(), &mut stack);
+    evaluate_population(&mut gp_context, &dataset, &targets.view(), &mut stack);
     let best = k_best_of(&gp_context.current.population, 1)
         .into_iter()
         .next()
@@ -317,13 +320,7 @@ fn main() {
     let n_nodes = arena.node_count_of_root(best.individual.root);
     let depth = arena.depth_of_root(best.individual.root);
     let eval = VectorizedEvalContext::new(arena, &gp_context.operations);
-    let raw_mse = mse(
-        &best.individual,
-        &eval,
-        inputs.view(),
-        targets.view(),
-        &mut stack,
-    );
+    let raw_mse = mse(&best.individual, &eval, &dataset, targets.view(), &mut stack);
     println!(
         "\nBest individual: MSE={raw_mse:.4e}  depth={depth}  nodes={n_nodes}  params={:.4?}",
         best.individual.parameters

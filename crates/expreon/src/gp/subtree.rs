@@ -85,7 +85,7 @@ pub fn gen_subtree<B: NodeBuilder>(b: &mut B, cfg: &GrowSubtreeConfig) -> NodeId
 
 pub(crate) fn emit_terminal<B: NodeBuilder>(b: &mut B, cfg: &TreeGenConfig) -> NodeId {
     // 50/50 between a variable and a new constant parameter.
-    if B::Genome::INPUT_DIM > 0 && b.rng().random::<bool>() {
+    if b.input_dim() > 0 && b.rng().random::<bool>() {
         let var = b.pick_variable();
         let kind = NodeKind::Variable(var);
         b.emit(ExprNode::new(kind, B::Genome::get_tag_for_node(kind)))
@@ -167,8 +167,9 @@ mod tests {
             },
         };
 
-        let mut ctx =
-            MutationContext::<TestSimpleGenome>::new(&src, &ops, &mut rng, &mut dest, &mut params);
+        let mut ctx = MutationContext::<TestSimpleGenome>::new(
+            &src, &ops, &mut rng, 2, &mut dest, &mut params,
+        );
         let root_node = gen_subtree(&mut ctx, &cfg);
         drop(ctx);
 
@@ -196,6 +197,7 @@ mod tests {
                 &src,
                 &ops,
                 &mut rng,
+                2,
                 &mut dest,
                 &mut params,
             );
@@ -210,6 +212,7 @@ mod tests {
                 &src,
                 &ops,
                 &mut rng,
+                2,
                 &mut dest,
                 &mut params,
             );
