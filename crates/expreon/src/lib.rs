@@ -8,6 +8,7 @@ pub mod ops {
 
 pub mod eval {
     pub use expreon_eval::{
+        cached::{CachePolicy, CachedEvalContext, EvalCache},
         eval::EagerEvalContext,
         vectorized::{Buffer, EvalBufferStack, VectorizedEvalContext},
     };

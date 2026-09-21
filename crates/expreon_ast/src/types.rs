@@ -9,7 +9,7 @@ pub type Scalar = f32;
 pub struct RootId(usize);
 
 /// Identifier for a node in an arena.
-#[derive(From, Into, Display, Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(From, Into, Display, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Hash)]
 pub struct NodeId(usize);
 
 /// Identifier for a user variable.

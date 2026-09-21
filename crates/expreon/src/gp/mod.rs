@@ -17,7 +17,7 @@ pub use breeding::{
     Breeder, GatedGenerationBreeder, GatedIndividualBuilder, GenerationBreeder,
     GenerationBreederParts,
 };
-use builder::NodeBuilder;
+pub use builder::NodeBuilder;
 pub use dataset::{ArrayDataset, Dataset};
 pub use fitness::{
     Fitness, IntegerFitness, ParetoFitness, ScalarFitness, k_best_of, k_best_of_with_comparator,
@@ -28,7 +28,7 @@ use population::{Population, Scored};
 pub mod prelude {
     pub use crate::gp::population::{Population, Scored};
     pub use crate::gp::{
-        Breeder, Context, Dataset, Fitness, Generation, Genome, Individual, k_best_of,
+        Breeder, Context, Dataset, Fitness, Generation, Genome, Individual, NodeBuilder, k_best_of,
         k_tournament_selection, mutation::Mutator,
     };
 }

@@ -62,6 +62,16 @@ impl<G: Genome, F: Fitness> Population<G, F> {
             }
         }
     }
+
+    /// Scores every unscored individual with `f` and records the results. Also provides a mutable
+    /// reference to the individual, allowing fine-tuning of individual parameters before scoring.
+    pub fn score_unscored_mut(&mut self, mut f: impl FnMut(&mut Individual<G>) -> F) {
+        for s in &mut self.0 {
+            if s.fitness.is_none() {
+                s.fitness = Some(f(&mut s.individual));
+            }
+        }
+    }
 }
 
 impl<G: Genome, F: Fitness> Deref for Population<G, F> {
@@ -122,6 +132,29 @@ mod tests {
         pop.score_unscored(|_| ScalarFitness(9.0));
         assert_eq!(pop[0].fitness, Some(ScalarFitness(1.0))); // untouched
         assert_eq!(pop[1].fitness, Some(ScalarFitness(9.0)));
+    }
+
+    #[test]
+    fn score_unscored_mut_only_touches_unscored() {
+        let mut pop: Population<TestSimpleGenome, ScalarFitness> = Population::new();
+        pop.insert(ind(0)).fitness = Some(ScalarFitness(1.0));
+        pop.insert(ind(1));
+        pop.score_unscored_mut(|_| ScalarFitness(9.0));
+        assert_eq!(pop[0].fitness, Some(ScalarFitness(1.0))); // untouched
+        assert_eq!(pop[1].fitness, Some(ScalarFitness(9.0)));
+    }
+
+    #[test]
+    fn score_unscored_mut_can_mutate_the_individual() {
+        let mut pop: Population<TestSimpleGenome, ScalarFitness> = Population::new();
+        pop.insert(ind(0)).fitness = Some(ScalarFitness(1.0));
+        pop.insert(ind(1)).individual.parameters = vec![0.0];
+        pop.score_unscored_mut(|ind| {
+            ind.parameters = vec![42.0];
+            ScalarFitness(0.0)
+        });
+        assert_eq!(pop[0].individual.parameters, Vec::<f32>::new()); // untouched
+        assert_eq!(pop[1].individual.parameters, vec![42.0]);
     }
 
     #[test]
