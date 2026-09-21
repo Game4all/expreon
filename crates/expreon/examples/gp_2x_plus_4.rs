@@ -320,7 +320,13 @@ fn main() {
     let n_nodes = arena.node_count_of_root(best.individual.root);
     let depth = arena.depth_of_root(best.individual.root);
     let eval = VectorizedEvalContext::new(arena, &gp_context.operations);
-    let raw_mse = mse(&best.individual, &eval, &dataset, targets.view(), &mut stack);
+    let raw_mse = mse(
+        &best.individual,
+        &eval,
+        &dataset,
+        targets.view(),
+        &mut stack,
+    );
     println!(
         "\nBest individual: MSE={raw_mse:.4e}  depth={depth}  nodes={n_nodes}  params={:.4?}",
         best.individual.parameters

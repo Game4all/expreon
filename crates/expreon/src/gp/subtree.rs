@@ -168,7 +168,12 @@ mod tests {
         };
 
         let mut ctx = MutationContext::<TestSimpleGenome>::new(
-            &src, &ops, &mut rng, 2, &mut dest, &mut params,
+            &src,
+            &ops,
+            &mut rng,
+            2,
+            &mut dest,
+            &mut params,
         );
         let root_node = gen_subtree(&mut ctx, &cfg);
         drop(ctx);

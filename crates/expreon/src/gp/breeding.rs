@@ -352,8 +352,7 @@ mod tests {
         }
 
         let parent = &ctx.current.population[0];
-        let mut breeding =
-            GenerationBreeder::new(&ctx.current, &mut ctx.next, &ctx.operations, 2);
+        let mut breeding = GenerationBreeder::new(&ctx.current, &mut ctx.next, &ctx.operations, 2);
         breeding.copy_individual_over(parent);
         ctx.advance();
 
@@ -378,8 +377,7 @@ mod tests {
             b.finish(node).fitness = Some(ScalarFitness(42.0));
         }
 
-        let mut breeding =
-            GenerationBreeder::new(&ctx.current, &mut ctx.next, &ctx.operations, 2);
+        let mut breeding = GenerationBreeder::new(&ctx.current, &mut ctx.next, &ctx.operations, 2);
         let parent = &breeding.source.population[0];
         breeding.copy_individual_over(parent);
         drop(breeding);
